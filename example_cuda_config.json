@@ -1,0 +1,24 @@
+{
+  "word_constraints": [
+    {
+      "position": 0,
+      "prefix": "ab",
+      "words": []
+    }
+  ],
+  "ethereum": {
+    "derivation_path": "m/44'/60'/0'/0/0",
+    "target_address": "0x742d35Cc6634C0532925a3b8D581C027BD5b7c4f"
+  },
+  "gpu": {
+    "backend": "cuda",
+    "devices": [0, 1],
+    "multi_gpu": true
+  },
+  "batch_size": 50000,
+  "passphrase": "",
+  "slack": {
+    "webhook_url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+    "channel": "#bip39-solver"
+  }
+}

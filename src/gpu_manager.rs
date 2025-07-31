@@ -25,7 +25,13 @@ impl GpuManager {
         let mut backend: Box<dyn GpuBackend> = match gpu_config.backend.as_str() {
             "cuda" => {
                 println!("Initializing CUDA backend...");
-                Box::new(CudaBackend::new())
+                let mut cuda_backend = CudaBackend::new();
+                
+                // Set up word space for CUDA backend
+                let word_space = WordSpace::from_config(config);
+                cuda_backend.set_word_space(Arc::new(word_space));
+                
+                Box::new(cuda_backend)
             }
             "opencl" | _ => {
                 println!("Initializing OpenCL backend...");
