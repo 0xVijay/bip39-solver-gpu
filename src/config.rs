@@ -90,7 +90,11 @@ impl Config {
                 WordConstraint {
                     position: 11,
                     prefix: None,
-                    words: vec!["abandon".to_string(), "ability".to_string(), "about".to_string()],
+                    words: vec![
+                        "abandon".to_string(),
+                        "ability".to_string(),
+                        "about".to_string(),
+                    ],
                 },
             ],
             ethereum: EthereumConfig {

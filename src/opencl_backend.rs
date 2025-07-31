@@ -1,6 +1,6 @@
+use crate::eth::{addresses_equal, derive_ethereum_address};
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
-use crate::eth::{derive_ethereum_address, addresses_equal};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ impl OpenClBackend {
             use_cpu_fallback: false,
         }
     }
-    
+
     /// Set the word space for mnemonic generation
     pub fn set_word_space(&mut self, word_space: Arc<WordSpace>) {
         self.word_space = Some(word_space);
@@ -32,36 +32,36 @@ impl GpuBackend for OpenClBackend {
     fn backend_name(&self) -> &'static str {
         "OpenCL"
     }
-    
+
     fn initialize(&mut self) -> Result<(), Box<dyn Error>> {
         if self.initialized {
             return Ok(());
         }
-        
+
         println!("Initializing OpenCL backend...");
-        
+
         // Try to check for OpenCL availability
         // For now, we'll always succeed and fall back to CPU
         self.use_cpu_fallback = true;
         println!("OpenCL backend initialized (CPU fallback mode)");
-        
+
         self.initialized = true;
         Ok(())
     }
-    
+
     fn shutdown(&mut self) -> Result<(), Box<dyn Error>> {
         if !self.initialized {
             return Ok(());
         }
-        
+
         println!("Shutting down OpenCL backend...");
         self.initialized = false;
         Ok(())
     }
-    
+
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
         let mut devices = Vec::new();
-        
+
         // For simplicity, create a CPU fallback device
         devices.push(GpuDevice {
             id: 0,
@@ -71,10 +71,10 @@ impl GpuBackend for OpenClBackend {
                 .map(|p| p.get() as u32)
                 .unwrap_or(4),
         });
-        
+
         Ok(devices)
     }
-    
+
     fn execute_batch(
         &self,
         _device_id: u32,
@@ -84,17 +84,19 @@ impl GpuBackend for OpenClBackend {
         derivation_path: &str,
         passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        let word_space = self.word_space.as_ref()
+        let word_space = self
+            .word_space
+            .as_ref()
             .ok_or("Word space not initialized")?;
-        
+
         // Use CPU processing (simplified for now)
         let mut processed_count = 0u128;
-        
+
         for offset in start_offset..(start_offset + batch_size) {
             if offset >= word_space.total_combinations {
                 break;
             }
-            
+
             if let Some(word_indices) = word_space.index_to_words(offset) {
                 if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
                     match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
@@ -116,7 +118,7 @@ impl GpuBackend for OpenClBackend {
             }
             processed_count += 1;
         }
-        
+
         Ok(GpuBatchResult {
             mnemonic: None,
             address: None,
@@ -124,7 +126,7 @@ impl GpuBackend for OpenClBackend {
             processed_count,
         })
     }
-    
+
     fn is_available(&self) -> bool {
         // OpenCL is always "available" since we fall back to CPU
         true
@@ -140,14 +142,14 @@ impl Default for OpenClBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_opencl_backend_creation() {
         let backend = OpenClBackend::new();
         assert_eq!(backend.backend_name(), "OpenCL");
         assert!(!backend.initialized);
     }
-    
+
     #[test]
     fn test_opencl_backend_availability() {
         let backend = OpenClBackend::new();

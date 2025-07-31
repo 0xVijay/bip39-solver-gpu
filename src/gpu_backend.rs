@@ -30,18 +30,18 @@ pub struct GpuDevice {
 pub trait GpuBackend: Send + Sync {
     /// Get the name of this backend (e.g., "OpenCL", "CUDA")
     fn backend_name(&self) -> &'static str;
-    
+
     /// Initialize the GPU backend
     fn initialize(&mut self) -> Result<(), Box<dyn Error>>;
-    
+
     /// Shutdown the GPU backend and cleanup resources
     fn shutdown(&mut self) -> Result<(), Box<dyn Error>>;
-    
+
     /// Enumerate available GPU devices
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>>;
-    
+
     /// Execute a batch of mnemonic candidates on the specified device
-    /// 
+    ///
     /// # Arguments
     /// * `device_id` - The GPU device to use
     /// * `start_offset` - Starting offset in the search space
@@ -49,7 +49,7 @@ pub trait GpuBackend: Send + Sync {
     /// * `target_address` - The Ethereum address to search for
     /// * `derivation_path` - BIP44 derivation path
     /// * `passphrase` - BIP39 passphrase
-    /// 
+    ///
     /// # Returns
     /// Result containing batch execution results
     fn execute_batch(
@@ -61,7 +61,7 @@ pub trait GpuBackend: Send + Sync {
         derivation_path: &str,
         passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>>;
-    
+
     /// Check if the backend is available on this system
     fn is_available(&self) -> bool;
 }

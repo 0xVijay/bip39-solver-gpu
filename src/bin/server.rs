@@ -1,7 +1,7 @@
 use std::env;
-use std::sync::Arc;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::io::{BufRead, BufReader, Write, Read};
+use std::sync::Arc;
 
 // Import from the local crate
 use bip39_solver_gpu::config::Config;
@@ -30,7 +30,7 @@ impl SimpleHttpServer {
                 Ok(stream) => {
                     let job_server = Arc::clone(&self.job_server);
                     let secret = self.secret.clone();
-                    
+
                     std::thread::spawn(move || {
                         if let Err(e) = handle_connection(stream, job_server, secret) {
                             eprintln!("Error handling connection: {}", e);
@@ -54,22 +54,22 @@ fn handle_connection(
     secret: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut buf_reader = BufReader::new(&mut stream);
-    
+
     // Read request line
     let mut request_line = String::new();
     buf_reader.read_line(&mut request_line)?;
     let request_line = request_line.trim();
-    
+
     // Parse HTTP request line
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
         send_response(&mut stream, 400, "Bad Request", b"Invalid request line")?;
         return Ok(());
     }
-    
+
     let method = parts[0];
     let path = parts[1];
-    
+
     // Read headers to get content length and authorization
     let mut headers = std::collections::HashMap::new();
     loop {
@@ -85,7 +85,7 @@ fn handle_connection(
             headers.insert(key, value);
         }
     }
-    
+
     // Check authorization
     if let Some(auth_header) = headers.get("authorization") {
         let expected = format!("Bearer {}", secret);
@@ -97,7 +97,7 @@ fn handle_connection(
         send_response(&mut stream, 401, "Unauthorized", b"Authorization required")?;
         return Ok(());
     }
-    
+
     // Route requests
     match (method, path) {
         ("POST", "/api/jobs/request") => {
@@ -116,7 +116,7 @@ fn handle_connection(
             send_response(&mut stream, 404, "Not Found", b"Endpoint not found")?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -127,20 +127,21 @@ fn handle_job_request(
     headers: &std::collections::HashMap<String, String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Read request body
-    let content_length: usize = headers.get("content-length")
+    let content_length: usize = headers
+        .get("content-length")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    
+
     if content_length == 0 {
         send_response(stream, 400, "Bad Request", b"Missing request body")?;
         return Ok(());
     }
-    
+
     let mut body = vec![0; content_length];
     stream.read_exact(&mut body)?;
-    
+
     let request: JobRequest = serde_json::from_slice(&body)?;
-    
+
     match job_server.assign_job(&request) {
         Ok(response) => {
             let json = serde_json::to_string(&response)?;
@@ -151,7 +152,7 @@ fn handle_job_request(
             send_json_response(stream, api_error.code, "Error", json.as_bytes())?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -161,20 +162,21 @@ fn handle_job_completion(
     job_server: Arc<JobServer>,
     headers: &std::collections::HashMap<String, String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let content_length: usize = headers.get("content-length")
+    let content_length: usize = headers
+        .get("content-length")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    
+
     if content_length == 0 {
         send_response(stream, 400, "Bad Request", b"Missing request body")?;
         return Ok(());
     }
-    
+
     let mut body = vec![0; content_length];
     stream.read_exact(&mut body)?;
-    
+
     let completion: JobCompletion = serde_json::from_slice(&body)?;
-    
+
     match job_server.complete_job(&completion) {
         Ok(()) => {
             send_response(stream, 200, "OK", b"Job completion recorded")?;
@@ -184,7 +186,7 @@ fn handle_job_completion(
             send_json_response(stream, api_error.code, "Error", json.as_bytes())?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -194,20 +196,21 @@ fn handle_heartbeat(
     job_server: Arc<JobServer>,
     headers: &std::collections::HashMap<String, String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let content_length: usize = headers.get("content-length")
+    let content_length: usize = headers
+        .get("content-length")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    
+
     if content_length == 0 {
         send_response(stream, 400, "Bad Request", b"Missing request body")?;
         return Ok(());
     }
-    
+
     let mut body = vec![0; content_length];
     stream.read_exact(&mut body)?;
-    
+
     let heartbeat: WorkerHeartbeat = serde_json::from_slice(&body)?;
-    
+
     match job_server.update_heartbeat(&heartbeat) {
         Ok(()) => {
             send_response(stream, 200, "OK", b"Heartbeat updated")?;
@@ -217,7 +220,7 @@ fn handle_heartbeat(
             send_json_response(stream, api_error.code, "Error", json.as_bytes())?;
         }
     }
-    
+
     Ok(())
 }
 
@@ -229,7 +232,7 @@ fn handle_status_request(
     let status = job_server.get_status();
     let json = serde_json::to_string(&status)?;
     send_json_response(stream, 200, "OK", json.as_bytes())?;
-    
+
     Ok(())
 }
 
@@ -242,9 +245,11 @@ fn send_response(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Length: {}\r\n\r\n",
-        status_code, status_text, body.len()
+        status_code,
+        status_text,
+        body.len()
     );
-    
+
     stream.write_all(response.as_bytes())?;
     stream.write_all(body)?;
     Ok(())
@@ -259,9 +264,11 @@ fn send_json_response(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-        status_code, status_text, body.len()
+        status_code,
+        status_text,
+        body.len()
     );
-    
+
     stream.write_all(response.as_bytes())?;
     stream.write_all(body)?;
     Ok(())
@@ -276,25 +283,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config_path = &args[2];
     let config = Config::load(config_path)?;
-    
+
     println!("Starting job server with config from: {}", config_path);
     println!("Target address: {}", config.ethereum.target_address);
-    
+
     // Get secret for authentication
-    let secret = config.worker.as_ref()
+    let secret = config
+        .worker
+        .as_ref()
         .map(|w| w.secret.clone())
         .unwrap_or_else(|| "default-secret".to_string());
-    
+
     // Create and initialize job server
     let job_server = Arc::new(JobServer::new(config)?);
     job_server.initialize_jobs()?;
-    
+
     // Start timeout handler
     job_server.start_timeout_handler();
-    
+
     // Start HTTP server
     let http_server = SimpleHttpServer::new(job_server, secret);
     http_server.run(3000)?;
-    
+
     Ok(())
 }
