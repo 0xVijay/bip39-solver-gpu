@@ -85,29 +85,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &parse_target_address(&config.ethereum.target_address)?,
                 &convert_word_space_to_constraints(&word_space),
             ) {
-                Ok(Some((index, mnemonic))) => {
-                    match derive_ethereum_address(
-                        &mnemonic, 
-                        &config.passphrase, 
-                        &config.ethereum.derivation_path
-                    ) {
-                        Ok(address) => {
-                            if addresses_equal(&address, &config.ethereum.target_address) {
-                                Some(WorkResult {
-                                    mnemonic,
-                                    address,
-                                    offset: index,
-                                })
-                            } else {
-                                None
+                Ok(Some((index, gpu_mnemonic))) => {
+                    // GPU found a candidate, but we need to validate it properly on CPU
+                    // because the GPU implementation is simplified
+                    println!("🔍 GPU found candidate at index {}, validating on CPU...", index);
+                    
+                    // Find the actual mnemonic from the index
+                    if let Some(word_indices) = word_space.index_to_words(index) {
+                        if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
+                            match derive_ethereum_address(
+                                &mnemonic, 
+                                &config.passphrase, 
+                                &config.ethereum.derivation_path
+                            ) {
+                                Ok(address) => {
+                                    if addresses_equal(&address, &config.ethereum.target_address) {
+                                        Some(WorkResult {
+                                            mnemonic,
+                                            address,
+                                            offset: index,
+                                        })
+                                    } else {
+                                        println!("⚠ GPU candidate validation failed, continuing search...");
+                                        None
+                                    }
+                                }
+                                Err(_) => {
+                                    println!("⚠ Error validating GPU candidate, continuing search...");
+                                    None
+                                }
                             }
+                        } else {
+                            None
                         }
-                        Err(_) => None,
+                    } else {
+                        None
                     }
                 }
-                Ok(None) => None,
+                Ok(None) => {
+                    println!("GPU processed batch {}-{} (no matches)", current_offset, batch_end);
+                    None
+                }
                 Err(e) => {
-                    eprintln!("GPU processing error: {}, falling back to CPU", e);
+                    eprintln!("GPU processing error: {}, falling back to CPU for this batch", e);
                     None
                 }
             }

@@ -15,6 +15,16 @@ pub struct GpuAccelerator {
 impl GpuAccelerator {
     /// Initialize the GPU accelerator with OpenCL
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        // Get all available platforms first
+        let platforms = match opencl3::platform::get_platforms() {
+            Ok(platforms) => platforms,
+            Err(e) => return Err(format!("No OpenCL platforms found: {}", e).into()),
+        };
+        
+        if platforms.is_empty() {
+            return Err("No OpenCL platforms available".into());
+        }
+        
         // Get all available devices
         let devices = get_all_devices(CL_DEVICE_TYPE_ALL)?;
         if devices.is_empty() {
@@ -22,7 +32,7 @@ impl GpuAccelerator {
         }
         
         let device = Device::new(devices[0]);
-        println!("Using device: {}", device.name()?);
+        println!("Using OpenCL device: {}", device.name()?);
         
         // Create context and command queue
         let context = Context::from_device(&device)?;
@@ -73,9 +83,9 @@ impl GpuAccelerator {
         start_index: u128,
         batch_size: u32,
         target_address: &[u8; 20],
-        _word_constraints: &[Vec<u16>; 12], // Word indices for each position
+        word_constraints: &[Vec<u16>; 12], // Word indices for each position
     ) -> Result<Option<(u128, String)>, Box<dyn std::error::Error>> {
-        // Create buffers
+        // Create buffers for target address
         let target_buffer: Buffer<u8> = unsafe {
             Buffer::create(
                 &self.context,
@@ -85,15 +95,50 @@ impl GpuAccelerator {
             )?
         };
         
-        let mut found_mnemonic = vec![0u8; 256]; // Buffer for found mnemonic
+        // Create buffer for found result
+        let mut found_result = vec![0u8; 256]; // Buffer for found result
         let found_buffer: Buffer<u8> = unsafe {
             Buffer::create(
                 &self.context,
                 CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                found_mnemonic.len(),
-                found_mnemonic.as_mut_ptr() as *mut std::ffi::c_void,
+                found_result.len(),
+                found_result.as_mut_ptr() as *mut std::ffi::c_void,
             )?
         };
+        
+        // Create buffers for word constraints (simplified approach)
+        // For demonstration, we'll just use the first word from each constraint
+        let mut constraint_buffers = Vec::new();
+        let mut constraint_sizes = Vec::new();
+        
+        for pos in 0..12 {
+            let constraints = &word_constraints[pos];
+            if constraints.is_empty() {
+                // If no constraints, use all possible words (0-2047)
+                let all_words: Vec<u16> = (0..2048).collect();
+                let buffer: Buffer<u16> = unsafe {
+                    Buffer::create(
+                        &self.context,
+                        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                        all_words.len() * std::mem::size_of::<u16>(),
+                        all_words.as_ptr() as *mut std::ffi::c_void,
+                    )?
+                };
+                constraint_buffers.push(buffer);
+                constraint_sizes.push(all_words.len() as u32);
+            } else {
+                let buffer: Buffer<u16> = unsafe {
+                    Buffer::create(
+                        &self.context,
+                        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                        constraints.len() * std::mem::size_of::<u16>(),
+                        constraints.as_ptr() as *mut std::ffi::c_void,
+                    )?
+                };
+                constraint_buffers.push(buffer);
+                constraint_sizes.push(constraints.len() as u32);
+            }
+        }
         
         // Create kernel
         let kernel = Kernel::create(&self.program, "mnemonic_to_eth_address")?;
@@ -109,6 +154,16 @@ impl GpuAccelerator {
                 .set_arg(&mnemonic_start_lo)
                 .set_arg(&target_buffer)
                 .set_arg(&found_buffer);
+                
+            // Add constraint buffers
+            for buffer in &constraint_buffers {
+                execute_kernel.set_arg(buffer);
+            }
+            
+            // Add constraint sizes
+            for size in &constraint_sizes {
+                execute_kernel.set_arg(size);
+            }
         }
         
         // Execute kernel
@@ -128,22 +183,25 @@ impl GpuAccelerator {
                 &found_buffer,
                 opencl3::types::CL_TRUE,
                 0,
-                &mut found_mnemonic,
+                &mut found_result,
                 &[],
             )?
         };
         read_event.wait()?;
         
         // Check if we found a result
-        if found_mnemonic[0] == 0x01 {
-            // Found a matching mnemonic
-            let mnemonic_bytes = &found_mnemonic[1..];
-            let null_pos = mnemonic_bytes.iter().position(|&b| b == 0).unwrap_or(mnemonic_bytes.len());
-            let mnemonic_str = String::from_utf8_lossy(&mnemonic_bytes[..null_pos]).to_string();
+        if found_result[0] == 1 {
+            // Found a matching combination
+            let found_index = u64::from_le_bytes([
+                found_result[1], found_result[2], found_result[3], found_result[4],
+                found_result[5], found_result[6], found_result[7], found_result[8]
+            ]) as u128;
             
-            // Calculate which index in the batch found the match
-            // This is a simplified approach - in practice you'd need to decode the exact index
-            Ok(Some((start_index, mnemonic_str)))
+            // Convert the found index back to a mnemonic using CPU
+            // This is a placeholder - in practice you'd reconstruct the mnemonic
+            let mnemonic_str = format!("GPU-found-at-index-{}", found_index);
+            
+            Ok(Some((start_index + found_index, mnemonic_str)))
         } else {
             Ok(None)
         }
