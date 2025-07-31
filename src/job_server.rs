@@ -54,7 +54,10 @@ impl JobServer {
         println!("Initializing jobs for search space of {} combinations", self.word_space.total_combinations);
         
         let mut current_offset = 0u128;
-        while current_offset < self.word_space.total_combinations {
+        let total_jobs_to_create = std::cmp::min(10000, (self.word_space.total_combinations / self.job_size) + 1);
+        let mut jobs_created = 0;
+        
+        while current_offset < self.word_space.total_combinations && jobs_created < total_jobs_to_create {
             let end_offset = std::cmp::min(current_offset + self.job_size, self.word_space.total_combinations);
             
             *job_counter += 1;
@@ -63,9 +66,10 @@ impl JobServer {
             
             jobs.insert(job_id, job);
             current_offset = end_offset;
+            jobs_created += 1;
         }
         
-        println!("Initialized {} jobs", jobs.len());
+        println!("Initialized {} jobs (limited to {} for testing)", jobs.len(), total_jobs_to_create);
         
         // Notify search started
         if let Some(notifier) = &self.slack_notifier {
