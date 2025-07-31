@@ -1,3 +1,5 @@
+Test GPU: ssh -p 49397 root@120.238.149.138 -L 8080:localhost:8080 : testpassword is the password
+
 # BIP39 Solver GPU - Ethereum Edition
 
 This project iterates through possible BIP39 mnemonics to find those that generate a target Ethereum address. It has been migrated from the original Bitcoin implementation to support Ethereum wallet cracking using GPU acceleration.
