@@ -5,7 +5,8 @@ authors = ["johncantrell97"]
 edition = "2018"
 
 [dependencies]
-# ocl = "0.19"  # Comment out for now to avoid build issues
+# ocl = "0.19"  # Has build issues with old rustc-serialize
+opencl3 = "0.9"  # Use newer OpenCL bindings
 hex = "0.4"
 rayon = "1.7"
 reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls"], default-features = false }

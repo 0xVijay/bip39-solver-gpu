@@ -6,6 +6,8 @@ mod config;
 mod word_space;
 mod eth;
 mod slack;
+#[cfg(test)]
+mod tests;
 
 use config::Config;
 use word_space::WordSpace;
@@ -135,16 +137,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_config_loading() {
-        let config = Config::default();
-        assert!(!config.ethereum.target_address.is_empty());
-        assert!(!config.ethereum.derivation_path.is_empty());
-    }
 }
