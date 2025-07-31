@@ -4,6 +4,18 @@ version = "0.1.0"
 authors = ["johncantrell97"]
 edition = "2018"
 
+[[bin]]
+name = "bip39-solver-gpu"
+path = "src/main.rs"
+
+[[bin]]
+name = "bip39-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "bip39-worker"
+path = "src/bin/worker.rs"
+
 [dependencies]
 # ocl = "0.19"  # Has build issues with old rustc-serialize
 opencl3 = "0.9"  # Use newer OpenCL bindings
