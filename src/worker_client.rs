@@ -196,6 +196,7 @@ impl WorkerClient {
             },
             slack: None,
             worker: None,
+            gpu: None,
             batch_size: self.capabilities.max_batch_size,
             passphrase: search_config.passphrase.clone(),
         };
@@ -270,6 +271,7 @@ mod tests {
                 server_url: "http://localhost:3000".to_string(),
                 secret: "test-secret".to_string(),
             }),
+            gpu: None,
             batch_size: 1000,
             passphrase: "".to_string(),
         }

@@ -144,6 +144,7 @@ mod tests {
             },
             slack: None,
             worker: None,
+            gpu: None,
             batch_size: 1000,
             passphrase: "".to_string(),
         };

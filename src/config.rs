@@ -35,6 +35,16 @@ pub struct WorkerConfig {
     pub secret: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GpuConfig {
+    /// GPU backend to use ("opencl" or "cuda")
+    pub backend: String,
+    /// List of GPU device IDs to use (empty = use all available)
+    pub devices: Vec<u32>,
+    /// Enable multi-GPU processing
+    pub multi_gpu: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Word constraints for generating candidate mnemonics
@@ -45,6 +55,8 @@ pub struct Config {
     pub slack: Option<SlackConfig>,
     /// Worker/distributed processing configuration (optional)
     pub worker: Option<WorkerConfig>,
+    /// GPU configuration (optional)
+    pub gpu: Option<GpuConfig>,
     /// Batch size for GPU processing
     pub batch_size: u64,
     /// BIP39 passphrase (empty string if none)
@@ -92,6 +104,11 @@ impl Config {
             worker: Some(WorkerConfig {
                 server_url: "http://localhost:3000".to_string(),
                 secret: "your-secret-key".to_string(),
+            }),
+            gpu: Some(GpuConfig {
+                backend: "opencl".to_string(),
+                devices: vec![], // Empty = use all available devices
+                multi_gpu: true,
             }),
             batch_size: 1000000,
             passphrase: "".to_string(),

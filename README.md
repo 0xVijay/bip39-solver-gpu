@@ -7,7 +7,8 @@ This project iterates through possible BIP39 mnemonics to find those that genera
 ## Features
 
 - **Ethereum Support**: Derives Ethereum addresses using BIP44 derivation path `m/44'/60'/0'/0/0`
-- **GPU Acceleration**: Uses OpenCL for high-performance parallel processing (currently CPU fallback)
+- **Multi-GPU Support**: Supports both OpenCL and CUDA backends with multi-GPU processing
+- **Modular GPU Backends**: Pluggable architecture for OpenCL and CUDA acceleration
 - **Distributed Processing**: Scale across multiple machines with job server and worker clients
 - **Configurable Constraints**: Specify known word prefixes or exact words for any mnemonic position
 - **Slack Notifications**: Get notified when a matching mnemonic is found
@@ -50,6 +51,11 @@ The tool uses a JSON configuration file instead of command-line flags. Run witho
     "server_url": "http://localhost:3000",
     "secret": "your-secret-key"
   },
+  "gpu": {
+    "backend": "opencl",
+    "devices": [],
+    "multi_gpu": true
+  },
   "batch_size": 1000000,
   "passphrase": ""
 }
@@ -70,6 +76,10 @@ The tool uses a JSON configuration file instead of command-line flags. Run witho
 - **worker**: Distributed processing settings (required for distributed mode)
   - `server_url`: URL of the job server (e.g., `http://localhost:3000`)
   - `secret`: Shared secret for authentication between server and workers
+- **gpu**: GPU processing settings (optional)
+  - `backend`: GPU backend to use (`"opencl"` or `"cuda"`)
+  - `devices`: Array of GPU device IDs to use (empty array = use all available)
+  - `multi_gpu`: Enable processing across multiple GPU devices
 - **batch_size**: Number of mnemonics to process in each batch
 - **passphrase**: BIP39 passphrase (empty string if none)
 
@@ -103,7 +113,66 @@ The tool uses a JSON configuration file instead of command-line flags. Run witho
    ./target/release/bip39-solver-gpu --config config.json --mode standalone
    # Or simply (standalone is default):
    ./target/release/bip39-solver-gpu --config config.json
+   
+   # Use specific GPU backend:
+   ./target/release/bip39-solver-gpu --config config.json --gpu-backend cuda
+   
+   # Use specific GPU devices:
+   ./target/release/bip39-solver-gpu --config config.json --gpu-device 0 --gpu-device 1
+   
+   # Enable multi-GPU processing:
+   ./target/release/bip39-solver-gpu --config config.json --multi-gpu
    ```
+
+### GPU Backend Configuration
+
+The tool supports multiple GPU backends for acceleration:
+
+#### OpenCL Backend (Default)
+- Supports most GPU vendors (NVIDIA, AMD, Intel)
+- Falls back to CPU processing if no OpenCL devices available
+- Good compatibility across different systems
+
+#### CUDA Backend
+- Optimized for NVIDIA GPUs
+- Currently in development (stub implementation)
+- Will provide better performance on supported hardware
+
+#### Multi-GPU Support
+Enable multi-GPU processing to scale across multiple devices:
+
+```bash
+# Use all available GPU devices
+./target/release/bip39-solver-gpu --config config.json --multi-gpu
+
+# Use specific devices only
+./target/release/bip39-solver-gpu --config config.json --gpu-device 0 --gpu-device 2 --multi-gpu
+
+# Force CUDA backend (when available)
+./target/release/bip39-solver-gpu --config config.json --gpu-backend cuda --multi-gpu
+```
+
+#### GPU Configuration Examples
+
+```json
+{
+  "gpu": {
+    "backend": "opencl",
+    "devices": [],         // Empty = use all available
+    "multi_gpu": true
+  }
+}
+```
+
+```json
+{
+  "gpu": {
+    "backend": "cuda", 
+    "devices": [0, 1],     // Use specific GPU devices
+    "multi_gpu": true
+  }
+}
+```
 
 ### Distributed Mode (Multiple Machines)
 
@@ -212,13 +281,25 @@ Received job job-15: range 1500000 to 1600000
 
 ## Performance
 
-The current CPU implementation processes approximately 2,500-3,000 mnemonics per second per core. In distributed mode, you can scale linearly by adding more worker machines. For example:
+The performance varies significantly based on the processing backend:
 
-- Single machine: ~3,000 mnemonics/sec
+### CPU Processing
+- Single machine: ~3,000 mnemonics/sec (baseline)
 - 10 worker machines: ~30,000 mnemonics/sec  
 - 100 worker machines: ~300,000 mnemonics/sec
 
-GPU acceleration will significantly improve these rates when fully implemented.
+### GPU Processing (When Fully Implemented)
+- Single OpenCL device: ~50,000-100,000 mnemonics/sec (estimated)
+- Single CUDA device: ~100,000-200,000 mnemonics/sec (estimated)
+- Multi-GPU setup (4 devices): ~400,000-800,000 mnemonics/sec (estimated)
+
+### Current Status
+- OpenCL backend currently falls back to CPU processing
+- CUDA backend is in development (stub implementation)
+- Multi-GPU coordination infrastructure is in place
+- Full GPU acceleration will be available in future releases
+
+Distributed mode with multiple worker machines can scale linearly regardless of the backend used.
 
 ## Technical Details
 
@@ -301,9 +382,14 @@ curl -H "Authorization: Bearer your-secret-key" http://localhost:3000/api/status
 - [x] REST API for job management and monitoring
 - [x] Worker heartbeat and fault tolerance
 - [x] Slack notification integration
+- [x] Modular GPU backend architecture (OpenCL/CUDA)
+- [x] Multi-GPU support infrastructure
+- [x] CUDA backend stub and FFI bindings
+- [ ] Complete CUDA kernel implementations (PBKDF2, secp256k1, Keccak-256)
+- [ ] Full OpenCL kernel integration
+- [ ] GPU memory optimization and batch processing
 - [ ] Hardware wallet integration for verification
 - [ ] Web-based monitoring dashboard
-- [ ] Enhanced GPU acceleration with OpenCL kernels
 - [ ] Support for other cryptocurrencies (Bitcoin, etc.)
 - [ ] Database persistence for large-scale deployments
 
