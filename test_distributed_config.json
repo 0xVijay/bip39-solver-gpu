@@ -1,0 +1,30 @@
+{
+  "word_constraints": [
+    {
+      "position": 0,
+      "prefix": null,
+      "words": ["abandon", "ability"]
+    },
+    {
+      "position": 1,
+      "prefix": null,
+      "words": ["abandon", "ability"]
+    },
+    {
+      "position": 11,
+      "prefix": null,
+      "words": ["about", "above"]
+    }
+  ],
+  "ethereum": {
+    "derivation_path": "m/44'/60'/0'/0/0",
+    "target_address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+  },
+  "slack": null,
+  "worker": {
+    "server_url": "http://localhost:3000",
+    "secret": "test-secret"
+  },
+  "batch_size": 1000,
+  "passphrase": ""
+}
