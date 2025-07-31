@@ -15,3 +15,8 @@ serde_json = "1"
 ethers-core = "2.0"
 k256 = "0.13"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
+# BIP39 and cryptographic dependencies
+bip39 = "2.0"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+hmac = "0.12"

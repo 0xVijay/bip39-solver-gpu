@@ -1,14 +1,10 @@
-use crate::config::{Config, WordConstraint};
-use std::collections::HashMap;
+use crate::config::Config;
+use bip39::{Language, Mnemonic};
 
-/// BIP39 word list (first few words for testing - in real implementation, include all 2048 words)
-const BIP39_WORDS: &[&str] = &[
-    "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", "absurd", "abuse",
-    "access", "accident", "account", "accuse", "achieve", "acid", "acoustic", "acquire", "across", "act",
-    "action", "actor", "actress", "actual", "adapt", "add", "addict", "address", "adjust", "admit",
-    "adult", "advance", "advice", "aerobic", "affair", "afford", "afraid", "again", "age", "agent",
-    // ... (in real implementation, include all 2048 BIP39 words)
-];
+/// Get the complete BIP39 word list (2048 words)
+fn get_bip39_wordlist() -> &'static [&'static str] {
+    bip39::Language::English.word_list()
+}
 
 #[derive(Debug, Clone)]
 pub struct WordSpace {
@@ -22,10 +18,11 @@ impl WordSpace {
     /// Generate word space based on configuration constraints
     pub fn from_config(config: &Config) -> WordSpace {
         let mut positions: Vec<Vec<u16>> = vec![Vec::new(); 12];
+        let wordlist = get_bip39_wordlist();
         
         // Initialize all positions with all possible words
         for pos in 0..12 {
-            for (word_idx, _word) in BIP39_WORDS.iter().enumerate() {
+            for (word_idx, _word) in wordlist.iter().enumerate() {
                 positions[pos].push(word_idx as u16);
             }
         }
@@ -41,13 +38,13 @@ impl WordSpace {
             if !constraint.words.is_empty() {
                 // If specific words are provided, use only those
                 for word in &constraint.words {
-                    if let Some(idx) = BIP39_WORDS.iter().position(|&w| w == word) {
+                    if let Some(idx) = wordlist.iter().position(|&w| w == word) {
                         valid_indices.push(idx as u16);
                     }
                 }
             } else if let Some(prefix) = &constraint.prefix {
                 // If prefix is provided, find all words that start with it
-                for (word_idx, word) in BIP39_WORDS.iter().enumerate() {
+                for (word_idx, word) in wordlist.iter().enumerate() {
                     if word.starts_with(prefix) {
                         valid_indices.push(word_idx as u16);
                     }
@@ -93,28 +90,35 @@ impl WordSpace {
         Some(result)
     }
     
-    /// Convert word indices to actual words
+    /// Convert word indices to actual words and validate BIP39 checksum
     pub fn words_to_mnemonic(word_indices: &[u16; 12]) -> Option<String> {
+        let wordlist = get_bip39_wordlist();
         let mut words = Vec::new();
         
         for &word_idx in word_indices {
-            if (word_idx as usize) >= BIP39_WORDS.len() {
+            if (word_idx as usize) >= wordlist.len() {
                 return None;
             }
-            words.push(BIP39_WORDS[word_idx as usize]);
+            words.push(wordlist[word_idx as usize]);
         }
         
-        Some(words.join(" "))
+        let mnemonic_str = words.join(" ");
+        
+        // Validate BIP39 checksum
+        match Mnemonic::parse_in(Language::English, &mnemonic_str) {
+            Ok(_) => Some(mnemonic_str),
+            Err(_) => None, // Invalid checksum
+        }
     }
     
     /// Get the word at a specific index in the BIP39 word list
     pub fn get_word(index: u16) -> Option<&'static str> {
-        BIP39_WORDS.get(index as usize).copied()
+        get_bip39_wordlist().get(index as usize).copied()
     }
     
     /// Get all BIP39 words
     pub fn get_all_words() -> &'static [&'static str] {
-        BIP39_WORDS
+        get_bip39_wordlist()
     }
 }
 
@@ -156,9 +160,9 @@ mod tests {
         // Position 1 should have exactly 2 words
         assert_eq!(word_space.positions[1], vec![1, 2]); // "ability", "able"
         
-        // Other positions should have all words
+        // Other positions should have all words (2048)
         for pos in 2..12 {
-            assert_eq!(word_space.positions[pos].len(), BIP39_WORDS.len());
+            assert_eq!(word_space.positions[pos].len(), 2048);
         }
     }
     
@@ -173,8 +177,24 @@ mod tests {
         let words = words.unwrap();
         assert_eq!(words.len(), 12);
         
-        // Test converting to mnemonic
+        // Test converting to mnemonic (may fail due to checksum validation)
         let mnemonic = WordSpace::words_to_mnemonic(&words);
-        assert!(mnemonic.is_some());
+        // Note: This might be None if the checksum is invalid, which is expected
+        if let Some(mnemonic_str) = mnemonic {
+            assert!(!mnemonic_str.is_empty());
+        }
+    }
+    
+    #[test]
+    fn test_bip39_checksum_validation() {
+        // Test with a known valid BIP39 mnemonic
+        let valid_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let mnemonic = Mnemonic::parse_in(Language::English, valid_mnemonic);
+        assert!(mnemonic.is_ok());
+        
+        // Test with an invalid mnemonic (wrong checksum)
+        let invalid_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+        let mnemonic = Mnemonic::parse_in(Language::English, invalid_mnemonic);
+        assert!(mnemonic.is_err());
     }
 }

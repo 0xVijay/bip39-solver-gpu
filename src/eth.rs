@@ -1,7 +1,9 @@
 use k256::ecdsa::SigningKey;
 use ethers_core::utils::keccak256;
-use ethers_core::types::{Address, H160};
-use std::str::FromStr;
+use bip39::{Language, Mnemonic};
+use hmac::Hmac;
+use pbkdf2::pbkdf2;
+use sha2::Sha512;
 
 /// Derive an Ethereum address from a BIP39 mnemonic
 pub fn derive_ethereum_address(
@@ -9,14 +11,13 @@ pub fn derive_ethereum_address(
     passphrase: &str,
     derivation_path: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // For now, implement a simplified version
-    // In a full implementation, you would use proper BIP32/BIP44 derivation
+    // Parse and validate the BIP39 mnemonic
+    let mnemonic = Mnemonic::parse_in(Language::English, mnemonic)?;
     
-    // Generate seed from mnemonic (simplified PBKDF2)
-    let seed = generate_seed_from_mnemonic(mnemonic, passphrase)?;
+    // Generate the seed using proper PBKDF2
+    let seed = mnemonic.to_seed(passphrase);
     
-    // For simplicity, we'll derive a key directly from the seed
-    // In a real implementation, you'd follow BIP32 hierarchical derivation
+    // Derive the private key using BIP32/BIP44 (simplified implementation)
     let private_key = derive_private_key_from_seed(&seed, derivation_path)?;
     
     // Convert private key to Ethereum address
@@ -25,35 +26,43 @@ pub fn derive_ethereum_address(
     Ok(format!("0x{}", hex::encode(address)))
 }
 
-/// Generate seed from mnemonic using PBKDF2 (simplified version)
-fn generate_seed_from_mnemonic(
+/// Generate seed from mnemonic using proper PBKDF2 (now handled by bip39 crate)
+/// This function is kept for compatibility but the bip39 crate handles this properly
+fn _generate_seed_from_mnemonic(
     mnemonic: &str,
     passphrase: &str,
 ) -> Result<[u8; 64], Box<dyn std::error::Error>> {
-    // This is a simplified implementation
-    // In production, use proper PBKDF2 with 2048 iterations
-    let salt = format!("mnemonic{}", passphrase);
     let mut seed = [0u8; 64];
+    let salt = format!("mnemonic{}", passphrase);
     
-    // Simple hash for demonstration - replace with proper PBKDF2
-    let hash_input = format!("{}{}", mnemonic, salt);
-    let hash = keccak256(hash_input.as_bytes());
-    
-    // Duplicate the hash to fill 64 bytes
-    seed[..32].copy_from_slice(&hash);
-    seed[32..].copy_from_slice(&hash);
+    pbkdf2::<Hmac<Sha512>>(
+        mnemonic.as_bytes(),
+        salt.as_bytes(),
+        2048,
+        &mut seed,
+    )?;
     
     Ok(seed)
 }
 
-/// Derive private key from seed (simplified BIP32 implementation)
+/// Derive private key from seed using BIP32 (simplified implementation)
+/// TODO: Implement full BIP32 hierarchical derivation
 fn derive_private_key_from_seed(
     seed: &[u8; 64],
     _derivation_path: &str,
 ) -> Result<[u8; 32], Box<dyn std::error::Error>> {
-    // Simplified derivation - in production, implement full BIP32
+    // This is still a simplified derivation
+    // Full BIP32 implementation would parse the derivation path and perform hierarchical derivation
     let mut private_key = [0u8; 32];
-    private_key.copy_from_slice(&seed[..32]);
+    
+    // Use HMAC-SHA512 for key derivation (closer to BIP32)
+    use hmac::{Hmac, Mac};
+    let mut mac = Hmac::<Sha512>::new_from_slice(b"Bitcoin seed")?;
+    mac.update(seed);
+    let result = mac.finalize().into_bytes();
+    
+    // Take the first 32 bytes as the private key
+    private_key.copy_from_slice(&result[..32]);
     
     Ok(private_key)
 }
