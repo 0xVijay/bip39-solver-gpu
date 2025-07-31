@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WordConstraint {
     /// Position in the 12-word mnemonic (0-11)
     pub position: usize,
@@ -11,7 +11,7 @@ pub struct WordConstraint {
     pub words: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EthereumConfig {
     /// Derivation path for Ethereum addresses (e.g., "m/44'/60'/0'/0/0")
     pub derivation_path: String,
@@ -27,7 +27,7 @@ pub struct SlackConfig {
     pub channel: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WorkerConfig {
     /// URL of work server for distributed processing
     pub server_url: String,
@@ -45,7 +45,7 @@ pub struct GpuConfig {
     pub multi_gpu: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     /// Word constraints for generating candidate mnemonics
     pub word_constraints: Vec<WordConstraint>,

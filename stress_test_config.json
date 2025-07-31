@@ -1,0 +1,16 @@
+{
+  "word_constraints": [],
+  "ethereum": {
+    "derivation_path": "m/44'/60'/0'/0/0",
+    "target_address": "0x742d35Cc6634C0532925a3b8D581C027BD5b7c4f"
+  },
+  "slack": null,
+  "worker": null,
+  "gpu": {
+    "backend": "opencl",
+    "devices": [],
+    "multi_gpu": true
+  },
+  "batch_size": 1000,
+  "passphrase": ""
+}
