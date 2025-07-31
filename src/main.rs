@@ -2,10 +2,13 @@ use std::env;
 use std::time::Instant;
 use rayon::prelude::*;
 
-mod config;
-mod word_space;
-mod eth;
-mod slack;
+pub mod config;
+pub mod word_space;
+pub mod eth;
+pub mod slack;
+pub mod job_types;
+pub mod job_server;
+pub mod worker_client;
 #[cfg(test)]
 mod tests;
 
@@ -23,8 +26,8 @@ struct WorkResult {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 || args[1] != "--config" {
-        eprintln!("Usage: {} --config <config.json>", args[0]);
+    if args.len() < 3 || args[1] != "--config" {
+        eprintln!("Usage: {} --config <config.json> [--mode <standalone|worker>]", args[0]);
         eprintln!("\nExample config:");
         let default_config = Config::default();
         println!("{}", serde_json::to_string_pretty(&default_config)?);
@@ -34,6 +37,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = &args[2];
     let config = Config::load(config_path)?;
     
+    // Check if running as worker
+    let mode = if args.len() >= 5 && args[3] == "--mode" {
+        args[4].clone()
+    } else {
+        "standalone".to_string()
+    };
+    
+    match mode.as_str() {
+        "worker" => {
+            // Run as distributed worker
+            worker_client::run_worker(&config, None)?;
+        }
+        "standalone" => {
+            // Run standalone version (original behavior)
+            run_standalone(&config, config_path)?;
+        }
+        _ => {
+            eprintln!("Invalid mode: {}. Use 'standalone' or 'worker'", mode);
+            std::process::exit(1);
+        }
+    }
+    
+    Ok(())
+}
+
+fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Loaded config from: {}", config_path);
     println!("Target address: {}", config.ethereum.target_address);
     println!("Derivation path: {}", config.ethereum.derivation_path);
