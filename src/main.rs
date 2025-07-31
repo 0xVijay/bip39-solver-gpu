@@ -4,6 +4,7 @@ use std::time::Instant;
 
 pub mod config;
 pub mod cuda_backend;
+pub mod error_handling;
 pub mod eth;
 pub mod gpu_backend;
 pub mod gpu_manager;
@@ -11,6 +12,7 @@ pub mod job_server;
 pub mod job_types;
 pub mod opencl_backend;
 pub mod slack;
+pub mod stress_testing;
 #[cfg(test)]
 mod tests;
 pub mod word_space;
@@ -20,6 +22,7 @@ use config::{Config, GpuConfig};
 use eth::{addresses_equal, derive_ethereum_address};
 use gpu_manager::GpuManager;
 use slack::SlackNotifier;
+use stress_testing::StressTester;
 use word_space::WordSpace;
 
 #[derive(Debug)]
@@ -38,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  --gpu-backend <opencl|cuda>    Set GPU backend (overrides config)");
         eprintln!("  --gpu-device <device_id>       Use specific GPU device (can be repeated)");
         eprintln!("  --multi-gpu                     Enable multi-GPU processing");
+        eprintln!("  --stress-test                   Run comprehensive stress tests");
         eprintln!("\nExample config:");
         let default_config = Config::default();
         println!("{}", serde_json::to_string_pretty(&default_config)?);
@@ -53,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut gpu_backend: Option<String> = None;
     let mut gpu_devices: Vec<u32> = Vec::new();
     let mut multi_gpu: Option<bool> = None;
+    let mut run_stress_test = false;
 
     while i < args.len() {
         match args[i].as_str() {
@@ -95,6 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 multi_gpu = Some(true);
                 i += 1;
             }
+            "--stress-test" => {
+                run_stress_test = true;
+                i += 1;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 std::process::exit(1);
@@ -123,6 +132,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         config.gpu = Some(gpu_config);
+    }
+
+    // Handle stress testing mode
+    if run_stress_test {
+        return run_stress_tests(&config);
     }
 
     match mode.as_str() {
@@ -335,4 +349,43 @@ fn search_with_cpu(
             });
 
     Ok(result)
+}
+
+/// Run comprehensive stress tests
+fn run_stress_tests(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🚀 Starting Advanced Error Handling & Stress Testing for CUDA Backend");
+    println!("=====================================================================\n");
+
+    let tester = StressTester::new();
+    
+    // Run all stress tests
+    let results = tester.run_all_tests(config)?;
+    
+    // Generate and display report
+    let report = tester.generate_report();
+    println!("{}", report);
+    
+    // Summary statistics
+    let total_tests = results.len();
+    let passed_tests = results.iter().filter(|r| r.success).count();
+    let failed_tests = total_tests - passed_tests;
+    
+    if failed_tests > 0 {
+        println!("⚠️  Some stress tests failed. Review the results above for details.");
+        println!("   Note: Some failures may be expected in environments without GPU hardware.");
+    } else {
+        println!("✅ All stress tests passed successfully!");
+    }
+    
+    println!("\n🎯 Error Handling Features Demonstrated:");
+    println!("   • Comprehensive CUDA error checking for all FFI calls");
+    println!("   • Device health monitoring and failure detection");
+    println!("   • Automatic failover from failed devices to healthy ones");
+    println!("   • Graceful CPU fallback when all GPUs fail");
+    println!("   • Structured logging with device info and timestamps");
+    println!("   • Edge-case and stress testing for huge batch sizes");
+    println!("   • Out-of-memory scenario handling");
+    println!("   • Distributed network stress testing (simulated)");
+    
+    Ok(())
 }
