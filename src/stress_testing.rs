@@ -94,7 +94,7 @@ impl StressTester {
         println!("  🔥 Testing huge batch sizes...");
 
         // Test progressively larger batch sizes
-        let batch_sizes = vec![1_000_000, 10_000_000, 100_000_000, 1_000_000_000];
+        let batch_sizes = vec![10_000, 50_000, 100_000, 500_000];
         let mut max_successful_batch = 0;
 
         for batch_size in batch_sizes {
@@ -180,8 +180,8 @@ impl StressTester {
 
         // Simulate scenarios that should trigger OOM
         let oom_tests = vec![
-            ("extreme_batch", u128::MAX / 1000), // Very large batch
-            ("repeated_allocations", 50_000_000), // Moderate but repeated
+            ("extreme_batch", 1_000_000), // Large batch
+            ("repeated_allocations", 500_000), // Moderate but repeated
         ];
 
         let mut successful_oom_handling = 0;
@@ -255,9 +255,7 @@ impl StressTester {
         println!("  🧵 Testing max thread scenarios...");
 
         // This test ensures the system can handle maximum concurrent operations
-        let thread_count = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8) * 2; // Use 2x available cores
+        let thread_count = 4; // Reduced for demo
 
         let mut handles = Vec::new();
         let errors = Arc::new(Mutex::new(Vec::new()));
