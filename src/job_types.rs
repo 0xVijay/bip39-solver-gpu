@@ -23,8 +23,8 @@ pub struct Job {
     pub start_offset: u128,
     pub end_offset: u128,
     pub status: JobStatus,
-    pub assigned_at: Option<u64>, // Unix timestamp
-    pub completed_at: Option<u64>, // Unix timestamp
+    pub assigned_at: Option<u64>,      // Unix timestamp
+    pub completed_at: Option<u64>,     // Unix timestamp
     pub worker_heartbeat: Option<u64>, // Last heartbeat from worker
 }
 
@@ -189,7 +189,7 @@ mod tests {
     fn test_job_assignment() {
         let mut job = Job::new("test-1".to_string(), 0, 1000);
         job.assign_to_worker("worker-1".to_string());
-        
+
         match job.status {
             JobStatus::Assigned { worker_id } => assert_eq!(worker_id, "worker-1"),
             _ => panic!("Job should be assigned"),
@@ -201,10 +201,10 @@ mod tests {
     fn test_job_timeout() {
         let mut job = Job::new("test-1".to_string(), 0, 1000);
         job.assign_to_worker("worker-1".to_string());
-        
+
         // Should not be timed out immediately
         assert!(!job.is_timed_out(60));
-        
+
         // Simulate old heartbeat
         job.worker_heartbeat = Some(current_timestamp() - 120);
         assert!(job.is_timed_out(60));

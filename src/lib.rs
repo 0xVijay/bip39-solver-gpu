@@ -1,9 +1,13 @@
 pub mod config;
-pub mod word_space;
+pub mod cuda_backend;
 pub mod eth;
-pub mod slack;
-pub mod job_types;
+pub mod gpu_backend;
+pub mod gpu_manager;
 pub mod job_server;
+pub mod job_types;
+pub mod opencl_backend;
+pub mod slack;
+pub mod word_space;
 pub mod worker_client;
 
 #[cfg(test)]

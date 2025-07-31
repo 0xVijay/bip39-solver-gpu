@@ -1,12 +1,12 @@
 use crate::config::{Config, WordConstraint};
+use crate::eth::{addresses_equal, derive_ethereum_address};
 use crate::job_types::*;
 use crate::word_space::WordSpace;
-use crate::eth::{derive_ethereum_address, addresses_equal};
-use std::time::{Duration, Instant};
-use std::thread;
 use rayon::prelude::*;
 use reqwest;
 use serde_json;
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Worker client connects to job server and performs distributed search
 pub struct WorkerClient {
@@ -35,13 +35,16 @@ impl WorkerClient {
     }
 
     /// Create worker from config
-    pub fn from_config(config: &Config, worker_id: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
-        let worker_config = config.worker.as_ref()
+    pub fn from_config(
+        config: &Config,
+        worker_id: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let worker_config = config
+            .worker
+            .as_ref()
             .ok_or("Worker configuration not found")?;
-        
-        let worker_id = worker_id.unwrap_or_else(|| {
-            format!("worker-{}", std::process::id())
-        });
+
+        let worker_id = worker_id.unwrap_or_else(|| format!("worker-{}", std::process::id()));
 
         let capabilities = WorkerCapabilities {
             max_batch_size: config.batch_size,
@@ -58,14 +61,20 @@ impl WorkerClient {
 
     /// Start the worker main loop
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("Worker {} starting, connecting to server at {}", self.worker_id, self.server_url);
-        
+        println!(
+            "Worker {} starting, connecting to server at {}",
+            self.worker_id, self.server_url
+        );
+
         loop {
             match self.request_job() {
                 Ok(response) => {
                     if let Some(job) = response.job {
-                        println!("Received job {}: range {} to {}", job.id, job.start_offset, job.end_offset);
-                        
+                        println!(
+                            "Received job {}: range {} to {}",
+                            job.id, job.start_offset, job.end_offset
+                        );
+
                         // Process the job
                         match self.process_job(&job, &response.search_config) {
                             Ok(result) => {
@@ -78,11 +87,11 @@ impl WorkerClient {
                                     result,
                                     error: None,
                                 };
-                                
+
                                 if let Err(e) = self.report_completion(&completion) {
                                     eprintln!("Failed to report job completion: {}", e);
                                 }
-                                
+
                                 // If solution found, exit
                                 if completion.result.is_some() {
                                     println!("Solution found! Worker exiting.");
@@ -91,7 +100,7 @@ impl WorkerClient {
                             }
                             Err(e) => {
                                 eprintln!("Error processing job {}: {}", job.id, e);
-                                
+
                                 // Report failure
                                 let completion = JobCompletion {
                                     job_id: job.id.clone(),
@@ -101,7 +110,7 @@ impl WorkerClient {
                                     result: None,
                                     error: Some(e.to_string()),
                                 };
-                                
+
                                 if let Err(e) = self.report_completion(&completion) {
                                     eprintln!("Failed to report job failure: {}", e);
                                 }
@@ -129,7 +138,8 @@ impl WorkerClient {
         };
 
         let url = format!("{}/api/jobs/request", self.server_url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.secret))
             .json(&request)
@@ -144,9 +154,13 @@ impl WorkerClient {
     }
 
     /// Report job completion to server
-    fn report_completion(&self, completion: &JobCompletion) -> Result<(), Box<dyn std::error::Error>> {
+    fn report_completion(
+        &self,
+        completion: &JobCompletion,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let url = format!("{}/api/jobs/complete", self.server_url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.secret))
             .json(completion)
@@ -160,7 +174,12 @@ impl WorkerClient {
     }
 
     /// Send heartbeat to server
-    fn send_heartbeat(&self, job_id: &JobId, progress: u64, rate: f64) -> Result<(), Box<dyn std::error::Error>> {
+    fn send_heartbeat(
+        &self,
+        job_id: &JobId,
+        progress: u64,
+        rate: f64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let heartbeat = WorkerHeartbeat {
             job_id: job_id.clone(),
             worker_id: self.worker_id.clone(),
@@ -169,7 +188,8 @@ impl WorkerClient {
         };
 
         let url = format!("{}/api/jobs/heartbeat", self.server_url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.secret))
             .json(&heartbeat)
@@ -183,10 +203,15 @@ impl WorkerClient {
     }
 
     /// Process a job by searching the assigned range
-    fn process_job(&self, job: &Job, search_config: &SearchConfig) -> Result<Option<SolutionResult>, Box<dyn std::error::Error>> {
+    fn process_job(
+        &self,
+        job: &Job,
+        search_config: &SearchConfig,
+    ) -> Result<Option<SolutionResult>, Box<dyn std::error::Error>> {
         // Parse word constraints from JSON
-        let word_constraints: Vec<WordConstraint> = serde_json::from_str(&search_config.word_constraints_serialized)?;
-        
+        let word_constraints: Vec<WordConstraint> =
+            serde_json::from_str(&search_config.word_constraints_serialized)?;
+
         // Create temporary config for word space generation
         let temp_config = Config {
             word_constraints,
@@ -196,17 +221,18 @@ impl WorkerClient {
             },
             slack: None,
             worker: None,
+            gpu: None,
             batch_size: self.capabilities.max_batch_size,
             passphrase: search_config.passphrase.clone(),
         };
 
         let word_space = WordSpace::from_config(&temp_config);
-        
+
         println!("Processing job {} with {} candidates", job.id, job.size());
-        
+
         let start_time = Instant::now();
-        let heartbeat_interval = Duration::from_secs(30);
-        let mut last_heartbeat = start_time;
+        let _heartbeat_interval = Duration::from_secs(30);
+        let _last_heartbeat = start_time;
 
         // Search the range in parallel
         let result: Option<SolutionResult> = (job.start_offset..job.end_offset)
@@ -239,16 +265,21 @@ impl WorkerClient {
 
         let elapsed = start_time.elapsed();
         let final_rate = job.size() as f64 / elapsed.as_secs_f64();
-        
-        println!("Completed job {} in {:?} ({:.2} mnemonics/sec)", 
-            job.id, elapsed, final_rate);
+
+        println!(
+            "Completed job {} in {:?} ({:.2} mnemonics/sec)",
+            job.id, elapsed, final_rate
+        );
 
         Ok(result)
     }
 }
 
 /// Standalone worker function that can be called from main
-pub fn run_worker(config: &Config, worker_id: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_worker(
+    config: &Config,
+    worker_id: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let worker = WorkerClient::from_config(config, worker_id)?;
     worker.run()
 }
@@ -270,6 +301,7 @@ mod tests {
                 server_url: "http://localhost:3000".to_string(),
                 secret: "test-secret".to_string(),
             }),
+            gpu: None,
             batch_size: 1000,
             passphrase: "".to_string(),
         }
@@ -289,14 +321,14 @@ mod tests {
             max_batch_size: 1000,
             estimated_rate: 2500.0,
         };
-        
+
         let worker = WorkerClient::new(
             "test-worker".to_string(),
             "http://localhost:3000".to_string(),
             "secret".to_string(),
             capabilities,
         );
-        
+
         assert_eq!(worker.capabilities.max_batch_size, 1000);
         assert_eq!(worker.capabilities.estimated_rate, 2500.0);
     }
