@@ -1,2 +1,5 @@
 target
 .DS_Store
+config.json
+test_config.json
+*.log
