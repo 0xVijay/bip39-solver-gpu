@@ -53,8 +53,8 @@ extern "C" int cuda_pbkdf2_batch_host(
     uint32_t count
 ) {
     // Allocate device memory and launch kernel
-    char** d_mnemonics;
-    char** d_passphrases;
+    const char** d_mnemonics;
+    const char** d_passphrases;
     uint8_t* d_seeds;
     
     // Allocate device memory

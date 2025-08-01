@@ -122,18 +122,41 @@ extern "C" int cuda_bip32_derive_batch_host(
     uint8_t* private_keys,
     uint32_t count
 ) {
-    // TODO: Implement proper memory management and kernel launch
+    // Allocate device memory
+    uint8_t* d_seeds;
+    uint32_t* d_derivation_paths;
+    uint8_t* d_private_keys;
     
+    cudaMalloc(&d_seeds, count * 64 * sizeof(uint8_t));
+    cudaMalloc(&d_derivation_paths, count * sizeof(uint32_t));
+    cudaMalloc(&d_private_keys, count * 32 * sizeof(uint8_t));
+    
+    // Copy input data to device
+    cudaMemcpy(d_seeds, seeds, count * 64 * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_derivation_paths, derivation_paths, count * sizeof(uint32_t), cudaMemcpyHostToDevice);
+    
+    // Calculate grid and block dimensions
     dim3 blockSize(256);
     dim3 gridSize((count + blockSize.x - 1) / blockSize.x);
     
-    // Launch kernel (commented out for stub)
-    // cuda_bip32_derive_batch<<<gridSize, blockSize>>>(seeds, derivation_paths, private_keys, count);
+    // Launch kernel
+    cuda_bip32_derive_batch<<<gridSize, blockSize>>>(d_seeds, d_derivation_paths, d_private_keys, count);
     
-    // cudaDeviceSynchronize();
-    // return cudaGetLastError() == cudaSuccess ? 0 : -1;
+    // Copy results back to host
+    cudaMemcpy(private_keys, d_private_keys, count * 32 * sizeof(uint8_t), cudaMemcpyDeviceToHost);
     
-    return 0; // Success (stub)
+    // Wait for completion
+    cudaDeviceSynchronize();
+    
+    // Check for errors
+    cudaError_t error = cudaGetLastError();
+    
+    // Free device memory
+    cudaFree(d_seeds);
+    cudaFree(d_derivation_paths);
+    cudaFree(d_private_keys);
+    
+    return (error == cudaSuccess) ? 0 : -1;
 }
 
 #endif // SECP256K1_CU
