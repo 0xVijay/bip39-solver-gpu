@@ -189,6 +189,7 @@ impl CudaBackend {
     }
     
     #[cfg(not(all(feature = "cuda", cuda_available)))]
+    #[allow(dead_code)]
     fn gpu_complete_pipeline_batch(
         &self,
         _mnemonics: &[String],

@@ -1,18 +1,29 @@
 #!/bin/bash
 set -e
 
-echo "==== BIP39 Solver GPU: Automated Installer, Builder & Quick Test ===="
+echo "==== BIP39 Solver GPU: Docker/VastAI Optimized Installer ===="
+
+# Detect if we're in a Docker environment or VastAI instance
+DOCKER_ENV=false
+if [ -f /.dockerenv ] || [ -n "${VAST_INSTANCE_ID}" ] || [ -n "${CUDA_VISIBLE_DEVICES}" ]; then
+    DOCKER_ENV=true
+    echo "🐳 Docker/VastAI environment detected"
+fi
 
 # Function to check if package is installed
 is_package_installed() {
-    dpkg -l "$1" &> /dev/null
+    if command -v dpkg &> /dev/null; then
+        dpkg -l "$1" &> /dev/null
+    else
+        rpm -q "$1" &> /dev/null 2>&1 || yum list installed "$1" &> /dev/null 2>&1 || false
+    fi
 }
 
-# Function to check if NVIDIA driver is already installed
+# Function to check if NVIDIA driver is working
 check_nvidia_driver() {
     if nvidia-smi &> /dev/null; then
-        echo "NVIDIA driver already installed and working:"
-        nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | head -1
+        echo "✅ NVIDIA driver working:"
+        nvidia-smi --query-gpu=driver_version,name,memory.total --format=csv,noheader,nounits | head -3
         return 0
     fi
     return 1
@@ -27,171 +38,211 @@ safe_install() {
         if ! is_package_installed "$package"; then
             to_install+=("$package")
         else
-            echo "Package $package already installed, skipping..."
+            echo "✓ Package $package already installed"
         fi
     done
     
     if [ ${#to_install[@]} -gt 0 ]; then
         echo "Installing packages: ${to_install[*]}"
-        sudo apt-get install -y "${to_install[@]}" || {
-            echo "Warning: Some packages failed to install: ${to_install[*]}"
+        if command -v apt-get &> /dev/null; then
+            apt-get update && apt-get install -y "${to_install[@]}" || {
+                echo "⚠️  Some packages failed to install: ${to_install[*]}"
+                return 1
+            }
+        elif command -v yum &> /dev/null; then
+            yum install -y "${to_install[@]}" || {
+                echo "⚠️  Some packages failed to install: ${to_install[*]}"
+                return 1
+            }
+        else
+            echo "❌ No supported package manager found"
             return 1
-        }
-    else
-        echo "All requested packages already installed."
+        fi
     fi
 }
 
-# Check for rust/cargo
+# Check for Rust/Cargo
 if ! command -v cargo &> /dev/null; then
-    echo "Rust/Cargo not found. Installing Rust toolchain..."
-    curl https://sh.rustup.rs -sSf | sh -s -- -y
-    source $HOME/.cargo/env
+    echo "Installing Rust toolchain..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    source ~/.cargo/env
     # Add Rust to PATH permanently
     echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
     echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.profile
 else
-    echo "Rust and Cargo found."
-fi
-
-echo "Installing system dependencies..."
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    sudo apt-get update
-    
-    # Install basic build dependencies first
-    echo "Installing build essentials and development dependencies..."
-    safe_install build-essential pkg-config libssl-dev cmake git curl wget software-properties-common ca-certificates gnupg lsb-release
-    
-    # Install OpenCL development headers and runtime
-    echo "Installing OpenCL development headers and runtime..."
-    safe_install ocl-icd-opencl-dev opencl-headers clinfo || {
-        echo "Installing basic OpenCL packages..."
-        safe_install ocl-icd-opencl-dev clinfo
-    }
-    
-    # Try to install OpenCL vendor implementations if not already present
-    safe_install mesa-opencl-icd intel-opencl-icd || echo "Some OpenCL vendor implementations not available"
-    
-    # Check if NVIDIA drivers are already working
-    if check_nvidia_driver; then
-        echo "NVIDIA driver already working, skipping driver installation..."
-    else
-        echo "No working NVIDIA driver detected, attempting installation..."
-        
-        # Try to install NVIDIA drivers with fallback options
-        echo "Installing NVIDIA drivers..."
-        if ! safe_install nvidia-driver-535; then
-            echo "nvidia-driver-535 failed, trying nvidia-driver-530..."
-            if ! safe_install nvidia-driver-530; then
-                echo "nvidia-driver-530 failed, trying nvidia-driver-525..."
-                if ! safe_install nvidia-driver-525; then
-                    echo "Manual driver packages failed, trying ubuntu-drivers..."
-                    sudo ubuntu-drivers install nvidia || {
-                        echo "Note: All NVIDIA driver installation methods failed."
-                        echo "You may need to install drivers manually or they may already be installed."
-                    }
-                fi
-            fi
-        fi
-    fi
-    
-    # Install CUDA toolkit if not already present
-    if ! command -v nvcc &> /dev/null; then
-        echo "NVCC not found, installing NVIDIA CUDA toolkit..."
-        
-        # Add NVIDIA official repository using package commands only
-        if [ ! -f /etc/apt/sources.list.d/cuda*.list ]; then
-            echo "Adding NVIDIA CUDA repository..."
-            sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/3bf863cc.pub || echo "CUDA GPG key fetch failed"
-            sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/ /" || echo "CUDA repository add failed"
-            sudo apt-get update
-        else
-            echo "CUDA repository already configured."
-        fi
-        
-        # Install CUDA toolkit from repositories
-        if ! safe_install nvidia-cuda-toolkit; then
-            echo "Trying alternative CUDA packages..."
-            safe_install cuda-toolkit-12-3 cuda-drivers || {
-                echo "Warning: CUDA toolkit installation failed. Building without CUDA support."
-            }
-        fi
-    else
-        echo "NVCC already available: $(nvcc --version | grep release)"
-    fi
-    
-    # Try to install NVIDIA OpenCL implementation if driver is working
-    if check_nvidia_driver; then
-        safe_install nvidia-opencl-icd-384 || safe_install nvidia-opencl-dev || echo "NVIDIA OpenCL implementation not available"
-    fi
-    
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "On macOS - installing dependencies via Homebrew..."
-    if command -v brew &> /dev/null; then
-        brew install pkg-config openssl
-    else
-        echo "Homebrew not found. Please install Homebrew first."
-    fi
-    echo "OpenCL is included with macOS. CUDA requires manual installation from NVIDIA."
+    echo "✅ Rust and Cargo found: $(cargo --version)"
 fi
 
 # Ensure Rust is in PATH for this session
 export PATH="$HOME/.cargo/bin:$PATH"
 
-echo ""
-echo "==== Installation Summary ===="
-echo "Checking final installation status..."
-
-# Check CUDA installation
-if command -v nvcc &> /dev/null; then
-    echo "✅ CUDA toolkit installed: $(nvcc --version | grep release)"
+echo "Installing essential build dependencies..."
+if [ "$DOCKER_ENV" = true ]; then
+    # In Docker/VastAI environment, focus on missing packages only
+    echo "🐳 Docker environment - installing minimal required packages"
+    safe_install build-essential pkg-config libssl-dev cmake git curl wget
 else
-    echo "❌ CUDA toolkit not available"
+    # Full system installation
+    echo "🖥️  Full system installation"
+    if command -v apt-get &> /dev/null; then
+        apt-get update
+        safe_install build-essential pkg-config libssl-dev cmake git curl wget \
+                    software-properties-common ca-certificates gnupg lsb-release
+    fi
 fi
 
-# Check NVIDIA driver
+# Check NVIDIA driver status
+if check_nvidia_driver; then
+    echo "🎯 NVIDIA GPU(s) detected and working"
+else
+    echo "⚠️  No working NVIDIA driver detected"
+    if [ "$DOCKER_ENV" = false ]; then
+        echo "Installing NVIDIA drivers..."
+        if command -v ubuntu-drivers &> /dev/null; then
+            ubuntu-drivers install nvidia || echo "⚠️  NVIDIA driver installation failed"
+        else
+            safe_install nvidia-driver-535 || safe_install nvidia-driver-530 || \
+            echo "⚠️  NVIDIA driver installation failed"
+        fi
+    else
+        echo "🐳 In Docker - assuming host has NVIDIA drivers configured"
+    fi
+fi
+
+# Check for CUDA toolkit
+if command -v nvcc &> /dev/null; then
+    echo "✅ CUDA toolkit found: $(nvcc --version | grep release)"
+else
+    echo "Installing CUDA toolkit..."
+    if [ "$DOCKER_ENV" = true ]; then
+        # In Docker, prioritize apt installation
+        safe_install nvidia-cuda-toolkit || {
+            # Try CUDA 12 packages if available
+            safe_install cuda-toolkit-12-3 cuda-toolkit-12-2 cuda-toolkit-12-1 || {
+                echo "⚠️  CUDA toolkit installation failed"
+                echo "💡 Note: CUDA may already be available in /usr/local/cuda"
+                # Check if CUDA is in common locations
+                for cuda_path in /usr/local/cuda /opt/cuda /usr/cuda; do
+                    if [ -f "$cuda_path/bin/nvcc" ]; then
+                        echo "✅ Found CUDA at: $cuda_path"
+                        export PATH="$cuda_path/bin:$PATH"
+                        export CUDA_PATH="$cuda_path"
+                        echo "export PATH=\"$cuda_path/bin:\$PATH\"" >> ~/.bashrc
+                        echo "export CUDA_PATH=\"$cuda_path\"" >> ~/.bashrc
+                        break
+                    fi
+                done
+            }
+        }
+    else
+        # Full system CUDA installation
+        if command -v apt-get &> /dev/null; then
+            if [ ! -f /etc/apt/sources.list.d/cuda*.list ]; then
+                echo "Adding NVIDIA CUDA repository..."
+                wget -qO - https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/3bf863cc.pub | apt-key add - || echo "⚠️  CUDA GPG key failed"
+                echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/ /" > /etc/apt/sources.list.d/cuda.list
+                apt-get update
+            fi
+            safe_install nvidia-cuda-toolkit cuda-toolkit-12-3 || echo "⚠️  CUDA installation failed"
+        fi
+    fi
+fi
+
+# Install OpenCL support
+echo "Installing OpenCL support..."
+if [ "$DOCKER_ENV" = true ]; then
+    # Minimal OpenCL for Docker
+    safe_install ocl-icd-opencl-dev opencl-headers clinfo || {
+        echo "⚠️  OpenCL packages not available in this environment"
+    }
+else
+    # Full OpenCL installation
+    safe_install ocl-icd-opencl-dev opencl-headers clinfo \
+                mesa-opencl-icd intel-opencl-icd || {
+        echo "⚠️  Some OpenCL packages not available"
+    }
+fi
+
+# Try to install NVIDIA OpenCL if NVIDIA driver is working
+if check_nvidia_driver; then
+    safe_install nvidia-opencl-icd || safe_install nvidia-opencl-dev || {
+        echo "💡 NVIDIA OpenCL may already be included with driver"
+    }
+fi
+
+echo ""
+echo "==== Installation Summary ===="
+
+# Check final status
+echo "🔍 Checking component status..."
+
+# Rust status
+if command -v cargo &> /dev/null; then
+    echo "✅ Rust: $(rustc --version)"
+else
+    echo "❌ Rust not available"
+fi
+
+# CUDA status
+if command -v nvcc &> /dev/null; then
+    echo "✅ CUDA: $(nvcc --version | grep release)"
+elif [ -f /usr/local/cuda/bin/nvcc ]; then
+    echo "✅ CUDA found at: /usr/local/cuda/bin/nvcc"
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export CUDA_PATH="/usr/local/cuda"
+else
+    echo "❌ CUDA toolkit not found"
+fi
+
+# NVIDIA driver status
 if check_nvidia_driver; then
     echo "✅ NVIDIA driver working"
 else
     echo "❌ NVIDIA driver not working"
 fi
 
-# Check OpenCL
+# OpenCL status  
 if command -v clinfo &> /dev/null; then
     echo "✅ OpenCL tools available"
-    clinfo -l 2>/dev/null | head -5 || echo "❌ No OpenCL devices found"
+    echo "📋 OpenCL platforms:"
+    clinfo -l 2>/dev/null | head -10 || echo "❌ No OpenCL devices found"
 else
     echo "❌ OpenCL tools not available"
 fi
 
 echo ""
-echo "Building project with GPU features..."
+echo "🔨 Building project with GPU features..."
 if cargo build --release --features cuda,opencl; then
-    echo "✅ Build successful"
+    echo "✅ Build successful!"
     
     echo ""
-    echo "Running quick test with example_test_config.json:"
-    ./target/release/bip39-solver-gpu --config example_test_config.json || {
-        echo "❌ Test failed. Check GPU driver installation."
+    echo "🧪 Running quick test:"
+    timeout 30 ./target/release/bip39-solver-gpu --config example_test_config.json || {
+        echo "⚠️  Test failed or timed out. Check GPU driver installation."
+        echo "💡 This may be normal if no target address is found quickly."
     }
 else
-    echo "❌ Build failed. Check dependencies."
+    echo "❌ Build failed"
+    echo ""
+    echo "🔧 Troubleshooting tips:"
+    echo "  • Ensure NVIDIA drivers are installed: nvidia-smi"
+    echo "  • Ensure CUDA toolkit is available: nvcc --version"
+    echo "  • Check OpenCL: clinfo"
+    echo "  • Try building without features: cargo build --release"
 fi
 
 echo ""
-echo "==== Manual Server/Worker Launch Example ===="
-echo "To launch a job server:"
-echo "  ./target/release/bip39-server --config example_test_config.json"
-echo "To launch a worker:"
-echo "  ./target/release/bip39-worker --config example_test_config.json --worker"
+echo "==== Quick Start Commands ===="
+echo "🚀 Run solver:"
+echo "  ./target/release/bip39-solver-gpu --config example_test_config.json"
+echo ""
+echo "🔧 Advanced options:"
+echo "  ./target/release/bip39-solver-gpu --config example_test_config.json --gpu-backend cuda --multi-gpu"
+echo "  ./target/release/bip39-solver-gpu --config example_test_config.json --gpu-backend opencl"
+echo ""
+echo "📊 Check GPU status:"
+echo "  nvidia-smi    # NVIDIA GPUs"
+echo "  clinfo        # OpenCL devices"
 
 echo ""
-echo "==== GPU Status Check ===="
-echo "Checking NVIDIA GPU status:"
-nvidia-smi || echo "No NVIDIA GPU or drivers found"
-echo ""
-echo "Checking OpenCL devices:"
-clinfo || echo "No OpenCL devices found"
-
-echo ""
-echo "==== Done! Check output above for results and next steps. ====" 
+echo "✨ Installation complete! Check status above for any issues."

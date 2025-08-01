@@ -107,11 +107,12 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
                 source,
                 "-o", object_path.to_str().unwrap(),
                 "--compiler-options", "-fPIC",
-                "-arch=sm_50",  // Compatible with most modern GPUs
+                "-arch=sm_75",  // Modern GPU architecture (RTX 20XX+, V100+) - avoids deprecated warnings
                 "-O3",          // Optimize for performance
                 "--std=c++11",  // C++11 standard
                 "-Xptxas", "-O3", // PTX optimization
                 "-lineinfo",    // Debug info
+                "-Wno-deprecated-gpu-targets", // Suppress deprecated architecture warnings
             ])
             .output()
             .map_err(|e| format!("Failed to execute nvcc: {}", e))?;
