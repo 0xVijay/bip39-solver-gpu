@@ -33,9 +33,14 @@ fn build_cuda_kernels() {
     // Compile CUDA kernels directly into object files and link them manually
     let kernel_files = ["pbkdf2.cu", "secp256k1.cu", "keccak256.cu"];
     
-    // Link CUDA runtime libraries first
-    println!("cargo:rustc-link-lib=dylib=cudart");
+    // Link CUDA runtime libraries - use static runtime for better compatibility
+    println!("cargo:rustc-link-lib=static=cudart_static");
     println!("cargo:rustc-link-lib=dylib=cuda");
+    
+    // Static CUDA runtime requires additional system libraries
+    println!("cargo:rustc-link-lib=dylib=pthread");
+    println!("cargo:rustc-link-lib=dylib=dl");
+    println!("cargo:rustc-link-lib=dylib=rt");
     
     // Add CUDA library search paths
     if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
