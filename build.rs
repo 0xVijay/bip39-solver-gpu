@@ -48,43 +48,50 @@ fn build_cuda_kernels() {
         println!("cargo:rustc-link-search=native=/opt/cuda/lib");
     }
     
-    // Compile all CUDA files together into a single object file
-    let obj_path = format!("{}/cuda_kernels.o", out_dir);
-    let mut nvcc_args = vec![
-        "-c",
-        "-O3", 
-        "--compiler-options", "-fPIC",
-        "-o", &obj_path
-    ];
+    // Compile each CUDA file to separate object files, then use cc to link them
+    let mut obj_files = Vec::new();
     
-    // Add all kernel files - collect paths as owned strings first
-    let kernel_paths: Vec<String> = kernel_files
-        .iter()
-        .map(|kernel| cuda_dir.join(kernel).to_string_lossy().to_string())
-        .collect();
-    
-    for path in &kernel_paths {
-        nvcc_args.push(path);
+    for kernel in &kernel_files {
+        let kernel_path = cuda_dir.join(kernel);
+        let obj_name = kernel.replace(".cu", ".o");
+        let obj_path = format!("{}/{}", out_dir, obj_name);
+        
+        let nvcc_args = vec![
+            "-c",
+            "-O3",
+            "--compiler-options", "-fPIC",
+            kernel_path.to_str().unwrap(),
+            "-o", &obj_path
+        ];
+        
+        let result = Command::new("nvcc").args(&nvcc_args).output();
+        match result {
+            Ok(output) if output.status.success() => {
+                obj_files.push(obj_path);
+            },
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("cargo:warning=CUDA compilation failed for {}: {}", kernel, stderr);
+                return;
+            },
+            Err(e) => {
+                println!("cargo:warning=Failed to run nvcc for {}: {}", kernel, e);
+                return;
+            }
+        }
     }
     
-    let result = Command::new("nvcc").args(&nvcc_args).output();
-    
-    match result {
-        Ok(output) if output.status.success() => {
-            println!("cargo:warning=CUDA kernels compiled successfully");
-            
-            // Use cc crate to compile and link the object file
-            let mut build = cc::Build::new();
-            build.object(&obj_path);
-            build.compile("cuda_kernels");
-            
-        },
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            println!("cargo:warning=CUDA compilation failed: {}", stderr);
-        },
-        Err(e) => {
-            println!("cargo:warning=Failed to run nvcc: {}", e);
+    if !obj_files.is_empty() {
+        println!("cargo:warning=CUDA kernels compiled successfully");
+        
+        // Use cc crate to compile and link all the object files
+        let mut build = cc::Build::new();
+        for obj in &obj_files {
+            build.object(obj);
         }
+        build.compile("cuda_kernels");
+        
+    } else {
+        println!("cargo:warning=No CUDA object files were created");
     }
 }
