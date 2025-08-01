@@ -48,6 +48,11 @@ fn build_cuda_kernels() {
         println!("cargo:rustc-link-search=native=/opt/cuda/lib");
     }
     
+    // Add system library paths where libcuda.so is typically located
+    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+    println!("cargo:rustc-link-search=native=/usr/lib64");
+    println!("cargo:rustc-link-search=native=/usr/lib");
+    
     // Compile each CUDA file to separate object files, then use cc to link them
     let mut obj_files = Vec::new();
     
