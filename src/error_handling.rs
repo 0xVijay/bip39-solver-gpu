@@ -278,7 +278,7 @@ pub mod cuda_errors {
     }
 
     /// Check for device availability and health
-    pub fn check_device_health(device_id: u32) -> Result<(), GpuError> {
+    pub fn check_device_health(_device_id: u32) -> Result<(), GpuError> {
         // In a real implementation, this would query CUDA device properties
         // For now, simulate occasional failures for testing
         Ok(())

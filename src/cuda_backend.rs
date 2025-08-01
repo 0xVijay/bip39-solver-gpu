@@ -1,8 +1,12 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
+#[cfg(feature = "cuda")]
+use crate::eth::addresses_equal;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "cuda")]
+use std::ffi::CString;
 use std::time::Instant;
 
 /// CUDA backend implementation with advanced error handling and failover
@@ -319,6 +323,7 @@ impl CudaBackend {
                 let address_bytes = &addresses[i * 20..(i + 1) * 20];
                 let address_hex = format!("0x{}", hex::encode(address_bytes));
 
+                use crate::eth::addresses_equal;
                 if addresses_equal(&address_hex, _target_address) {
                     println!("🎉 CUDA kernel found a match!");
                     return Ok(GpuBatchResult {
