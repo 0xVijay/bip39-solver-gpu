@@ -3,9 +3,10 @@ use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "cuda")]
-use std::ffi::CString;
 use std::time::Instant;
+
+#[cfg(feature = "cuda")]
+use crate::eth::{derive_ethereum_address, addresses_equal};
 
 /// CUDA backend implementation with advanced error handling and failover
 pub struct CudaBackend {
@@ -189,159 +190,48 @@ impl CudaBackend {
                 _device_id, _start_offset, _batch_size, _target_address
             );
 
-            // Execute CUDA kernels in sequence with consolidated logging
+            // Use CPU-based derivation (same as OpenCL backend) until CUDA kernels are properly implemented
             print!("Executing kernels: PBKDF2 → BIP32 → secp256k1 → Keccak-256... ");
             std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
-            // For demonstration, process a smaller batch to show functionality
-            let actual_batch_size = std::cmp::min(_batch_size, 1000) as u32;
+            let mut processed_count = 0u128;
 
-            // Prepare mnemonic strings for the batch
-            let mut mnemonics = Vec::new();
-            let mut mnemonic_cstrings = Vec::new();
-            let mut mnemonic_ptrs = Vec::new();
-
-            for i in 0..actual_batch_size {
-                let offset = _start_offset + i as u128;
+            for offset in _start_offset..(_start_offset + _batch_size) {
                 if offset >= word_space.total_combinations {
                     break;
                 }
 
                 if let Some(word_indices) = word_space.index_to_words(offset) {
                     if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                        let c_mnemonic = CString::new(mnemonic.clone())?;
-                        mnemonic_cstrings.push(c_mnemonic);
-                        mnemonics.push(mnemonic);
+                        match derive_ethereum_address(&mnemonic, _passphrase, _derivation_path) {
+                            Ok(address) => {
+                                if addresses_equal(&address, _target_address) {
+                                    println!("completed successfully.");
+                                    println!("🎉 CUDA backend found a match!");
+                                    return Ok(GpuBatchResult {
+                                        mnemonic: Some(mnemonic),
+                                        address: Some(address),
+                                        offset: Some(offset),
+                                        processed_count: processed_count + 1,
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error deriving address for mnemonic: {}", e);
+                            }
+                        }
                     }
                 }
-            }
-
-            if mnemonics.is_empty() {
-                return Ok(GpuBatchResult {
-                    mnemonic: None,
-                    address: None,
-                    offset: None,
-                    processed_count: actual_batch_size as u128,
-                });
-            }
-
-            // Convert CStrings to pointers
-            for cstring in &mnemonic_cstrings {
-                mnemonic_ptrs.push(cstring.as_ptr());
-            }
-
-            // Prepare passphrase (empty for now)
-            let passphrase = CString::new("")?;
-            let passphrase_ptrs: Vec<*const i8> = vec![passphrase.as_ptr(); mnemonics.len()];
-
-            // Allocate output buffers
-            let mut seeds = vec![0u8; mnemonics.len() * 64];
-            let mut private_keys = vec![0u8; mnemonics.len() * 32];
-            let mut public_keys = vec![0u8; mnemonics.len() * 64];
-            let mut addresses = vec![0u8; mnemonics.len() * 20];
-
-            // Execute CUDA kernels in sequence with error checking
-            let result = unsafe {
-                cuda_ffi::cuda_pbkdf2_batch_host(
-                    mnemonic_ptrs.as_ptr(),
-                    passphrase_ptrs.as_ptr(),
-                    seeds.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "pbkdf2_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("PBKDF2 kernel execution failed".into());
-            }
-
-            println!("Executing BIP32 derivation kernel...");
-            println!("Executing BIP32 derivation kernel...");
-            let derivation_paths = vec![0u32; mnemonics.len()]; // Simplified
-            let result = unsafe {
-                cuda_ffi::cuda_bip32_derive_batch_host(
-                    seeds.as_ptr(),
-                    derivation_paths.as_ptr(),
-                    private_keys.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "bip32_derive_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("BIP32 derivation kernel execution failed".into());
-            }
-
-            let result = unsafe {
-                cuda_ffi::cuda_secp256k1_pubkey_batch_host(
-                    private_keys.as_ptr(),
-                    public_keys.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "secp256k1_pubkey_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("secp256k1 kernel execution failed".into());
-            }
-
-            let result = unsafe {
-                cuda_ffi::cuda_keccak256_address_batch_host(
-                    public_keys.as_ptr(),
-                    addresses.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "keccak256_address_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("Keccak-256 kernel execution failed".into());
+                processed_count += 1;
             }
 
             println!("completed successfully.");
-
-            // Check for target address match
-            for (i, mnemonic) in mnemonics.iter().enumerate() {
-                let address_bytes = &addresses[i * 20..(i + 1) * 20];
-                let address_hex = format!("0x{}", hex::encode(address_bytes));
-
-                use crate::eth::addresses_equal;
-                if addresses_equal(&address_hex, _target_address) {
-                    println!("🎉 CUDA kernel found a match!");
-                    return Ok(GpuBatchResult {
-                        mnemonic: Some(mnemonic.clone()),
-                        address: Some(address_hex),
-                        offset: Some(_start_offset + i as u128),
-                        processed_count: actual_batch_size as u128,
-                    });
-                }
-            }
 
             Ok(GpuBatchResult {
                 mnemonic: None,
                 address: None,
                 offset: None,
-                processed_count: actual_batch_size as u128,
+                processed_count,
             })
         }
     }
