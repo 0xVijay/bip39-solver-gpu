@@ -35,3 +35,4 @@ k256 = "0.13"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 [build-dependencies]
+cc = "1.0"
