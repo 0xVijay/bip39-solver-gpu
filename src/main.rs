@@ -1,7 +1,6 @@
 use rayon::prelude::*;
 use std::env;
 use std::time::Instant;
-use std::io::Write;
 
 pub mod config;
 pub mod cuda_backend;

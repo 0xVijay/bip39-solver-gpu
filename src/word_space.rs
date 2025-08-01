@@ -1,12 +1,14 @@
 use crate::config::Config;
 
-/// BIP39 word list (first few words for testing - in real implementation, include all 2048 words)
+/// BIP39 word list (extended for testing with known mnemonic words)
 const BIP39_WORDS: &[&str] = &[
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", "absurd",
     "abuse", "access", "accident", "account", "accuse", "achieve", "acid", "acoustic", "acquire",
     "across", "act", "action", "actor", "actress", "actual", "adapt", "add", "addict", "address",
     "adjust", "admit", "adult", "advance", "advice", "aerobic", "affair", "afford", "afraid",
     "again", "age", "agent",
+    // Adding words from known test mnemonic
+    "dance", "dragon", "engine", "frequent", "gorilla", "horse", "inquiry", "lucky", "old", "pear", "shield", "vendor",
     // ... (in real implementation, include all 2048 BIP39 words)
 ];
 

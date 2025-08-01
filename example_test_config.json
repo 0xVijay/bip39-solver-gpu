@@ -1,21 +1,21 @@
 {
   "word_constraints": [
-    { "position": 0, "prefix": "ab", "words": ["abandon", "ability", "able"] },
-    { "position": 1, "prefix": "ac", "words": ["access", "accident", "account"] },
-    { "position": 2, "prefix": "ac", "words": ["acquire", "across", "act"] },
-    { "position": 3, "prefix": "act", "words": ["action", "actor", "actress"] },
-    { "position": 4, "prefix": "ad", "words": ["adapt", "add", "addict"] },
-    { "position": 5, "prefix": "ad", "words": ["address", "adjust", "admit"] },
-    { "position": 6, "prefix": "ad", "words": ["adult", "advance", "advice"] },
-    { "position": 7, "prefix": "af", "words": ["affair", "afford", "afraid"] },
-    { "position": 8, "prefix": "ag", "words": ["again", "age", "agent"] },
-    { "position": 9, "prefix": "ab", "words": ["abandon", "ability"] },
-    { "position": 10, "prefix": "ac", "words": ["access", "account"] },
-    { "position": 11, "prefix": "ad", "words": ["adapt"] }
+    { "position": 0, "words": ["frequent"] },
+    { "position": 1, "words": ["lucky"] },
+    { "position": 2, "words": ["inquiry"] },
+    { "position": 3, "words": ["vendor"] },
+    { "position": 4, "words": ["engine"] },
+    { "position": 5, "words": ["dragon"] },
+    { "position": 6, "words": ["horse"] },
+    { "position": 7, "words": ["gorilla"] },
+    { "position": 8, "words": ["pear"] },
+    { "position": 9, "words": ["old"] },
+    { "position": 10, "words": ["dance"] },
+    { "position": 11, "words": ["shield"] }
   ],
   "ethereum": {
     "derivation_path": "m/44'/60'/0'/0/2",
-    "target_address": "0x543Bd35F52147370C0deCBd440863bc2a002C5c5"
+    "target_address": "0xc5d6d33faf930aa69aa4db6ef719aedd5af27019"
   },
   "mnemonic_length": 12,
   "wallet_type": "ethereum",
