@@ -19,41 +19,46 @@ echo "Installing system dependencies..."
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     sudo apt-get update
     
-    # Install OpenCL development headers
-    echo "Installing OpenCL development headers..."
-    sudo apt-get install -y ocl-icd-opencl-dev clinfo
+    # Install OpenCL development headers and runtime
+    echo "Installing OpenCL development headers and runtime..."
+    sudo apt-get install -y ocl-icd-opencl-dev opencl-headers clinfo mesa-opencl-icd intel-opencl-icd nvidia-opencl-icd-384 || {
+        echo "Installing basic OpenCL packages..."
+        sudo apt-get install -y ocl-icd-opencl-dev clinfo
+    }
     
-    # Install CUDA toolkit via apt (more reliable than run file)
-    echo "Installing NVIDIA CUDA toolkit via apt..."
+    # Install CUDA toolkit via package managers only
+    echo "Installing NVIDIA CUDA toolkit via package managers..."
     
-    # Add NVIDIA package repositories
-    sudo apt-get install -y software-properties-common
+    # Install required packages for adding repositories
+    sudo apt-get install -y software-properties-common ca-certificates gnupg lsb-release
     
-    # Install CUDA toolkit from Ubuntu repositories
-    sudo apt-get install -y nvidia-cuda-toolkit || {
-        echo "Warning: Ubuntu CUDA package failed. Trying NVIDIA repositories..."
-        
-        # Try NVIDIA's official repository
-        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb || {
-            echo "Note: CUDA keyring download failed"
+    # Add NVIDIA official repository using package commands only
+    echo "Adding NVIDIA CUDA repository..."
+    sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/3bf863cc.pub || echo "CUDA GPG key fetch failed"
+    sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(lsb_release -rs | tr -d .)/x86_64/ /" || echo "CUDA repository add failed"
+    
+    # Update package lists
+    sudo apt-get update
+    
+    # Install CUDA toolkit from repositories
+    sudo apt-get install -y cuda-toolkit-12-3 cuda-drivers nvidia-cuda-toolkit || {
+        echo "Warning: Latest CUDA packages failed. Trying fallback packages..."
+        sudo apt-get install -y nvidia-cuda-toolkit cuda-toolkit || {
+            echo "Note: CUDA installation failed. Will build with existing setup."
         }
-        
-        if [ -f "cuda-keyring_1.0-1_all.deb" ]; then
-            sudo dpkg -i cuda-keyring_1.0-1_all.deb
-            sudo apt-get update
-            sudo apt-get install -y cuda-toolkit-12-2 || {
-                echo "Note: CUDA installation failed. Will build with existing drivers."
-            }
-        fi
     }
     
-    # Install NVIDIA drivers if not present
-    sudo apt-get install -y nvidia-driver-535 || {
-        echo "Note: NVIDIA driver installation failed or drivers already present."
+    # Install NVIDIA drivers with multiple fallback options
+    echo "Installing NVIDIA drivers..."
+    sudo apt-get install -y nvidia-driver-535 nvidia-driver-530 nvidia-driver-525 || {
+        echo "Installing latest available NVIDIA driver..."
+        sudo ubuntu-drivers install nvidia || {
+            echo "Note: NVIDIA driver installation failed or drivers already present."
+        }
     }
     
-    # Install build essentials
-    sudo apt-get install -y build-essential pkg-config libssl-dev
+    # Install build essentials and development dependencies
+    sudo apt-get install -y build-essential pkg-config libssl-dev cmake git curl wget
     
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     echo "On macOS - installing dependencies via Homebrew..."
