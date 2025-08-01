@@ -88,7 +88,8 @@ __device__ void cuda_derive_ethereum_private_key(
     // Split master key
     for (int i = 0; i < 32; i++) {
         current_private_key[i] = master_private_key[i];
-        current_chain_code[i] = master_private_key[32 + i];
+        master_chain_code[i] = master_private_key[32 + i];
+        current_chain_code[i] = master_chain_code[i];
     }
     
     // Derive m/44' (hardened)

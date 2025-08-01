@@ -318,7 +318,7 @@ extern "C" int cuda_pbkdf2_batch_host(
     
     // Launch kernel
     cuda_pbkdf2_batch<<<grid_size, block_size>>>(
-        d_mnemonics, d_passphrases, d_seeds, count
+        (const char**)d_mnemonics, (const char**)d_passphrases, d_seeds, count
     );
     
     // Wait for completion

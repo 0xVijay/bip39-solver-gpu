@@ -8,7 +8,7 @@ build = "build.rs"
 [features]
 default = []
 cuda = []
-opencl = ["opencl3"]
+opencl = ["dep:opencl3"]  # Use dep: syntax for cleaner conditional dependencies
 
 [[bin]]
 name = "bip39-solver-gpu"

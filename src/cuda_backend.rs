@@ -56,6 +56,7 @@ unsafe fn cuda_get_device_properties(prop: *mut CudaDeviceProperties, device: i3
 }
 
 #[cfg(not(all(feature = "cuda", cuda_available)))]
+#[allow(dead_code)]
 unsafe fn cuda_get_device_count(_count: *mut i32) -> i32 {
     -1
 }
@@ -123,6 +124,7 @@ impl CudaBackend {
 
     /// Complete GPU pipeline: Mnemonic → Address with target matching - only when CUDA is available
     #[cfg(all(feature = "cuda", cuda_available))]
+    #[allow(dead_code)]
     fn gpu_complete_pipeline_batch(
         &self,
         mnemonics: &[String],
