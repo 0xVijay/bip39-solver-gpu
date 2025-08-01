@@ -131,6 +131,11 @@ impl GpuManager {
         self.config.multi_gpu && self.devices.len() > 1
     }
 
+    /// Check if multi-GPU was requested in config
+    pub fn is_multi_gpu_requested(&self) -> bool {
+        self.config.multi_gpu
+    }
+
     /// Get healthy devices that can accept work
     pub fn get_healthy_devices(&self) -> Vec<u32> {
         if let Ok(status_vec) = self.device_status.lock() {

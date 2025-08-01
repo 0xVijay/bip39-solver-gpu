@@ -170,13 +170,19 @@ fn run_standalone_auto_detect(config: &Config, config_path: &str) -> Result<(), 
 fn run_search_loop(gpu_manager: &mut GpuManager, config: &Config, _config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     
     println!("✅ GPU backend initialized: {}", gpu_manager.backend_name());
-    if gpu_manager.is_multi_gpu_enabled() {
+    
+    let device_count = gpu_manager.devices().len();
+    let multi_gpu_requested = gpu_manager.is_multi_gpu_requested();
+    
+    if multi_gpu_requested && device_count > 1 {
         println!(
             "🔥 Multi-GPU processing enabled with {} device(s)",
-            gpu_manager.devices().len()
+            device_count
         );
+    } else if multi_gpu_requested && device_count == 1 {
+        println!("🖥️  Multi-GPU requested but only {} device available", device_count);
     } else {
-        println!("🖥️  Single GPU processing with {} device(s)", gpu_manager.devices().len());
+        println!("🖥️  Single GPU processing with {} device(s)", device_count);
     }
     
     for device in gpu_manager.devices() {

@@ -312,12 +312,39 @@ impl GpuBackend for CudaBackend {
         let mut devices = Vec::new();
 
         for i in 0..device_count {
-            // In a real implementation, this would query actual device properties
+            let mut properties = cuda_ffi::CudaDeviceProperties {
+                name: [0; 256],
+                total_global_mem: 0,
+                multiprocessor_count: 0,
+                max_threads_per_block: 0,
+            };
+
+            let result = unsafe { cuda_ffi::cudaGetDeviceProperties(&mut properties, i) };
+            
+            let (device_name, memory, compute_units) = if result == 0 {
+                // Extract device name from C-string
+                let name_end = properties.name.iter().position(|&c| c == 0).unwrap_or(255);
+                let device_name = String::from_utf8_lossy(&properties.name[..name_end]).to_string();
+                
+                (
+                    device_name,
+                    properties.total_global_mem as u64,
+                    properties.multiprocessor_count as u32,
+                )
+            } else {
+                // Fallback to generic naming if property query fails
+                (
+                    format!("CUDA Device {}", i),
+                    8 * 1024 * 1024 * 1024, // 8GB default
+                    80,                      // Default compute units
+                )
+            };
+
             devices.push(GpuDevice {
                 id: i as u32,
-                name: format!("CUDA Device {}", i),
-                memory: 8 * 1024 * 1024 * 1024, // 8GB default
-                compute_units: 80,              // Default compute units
+                name: device_name,
+                memory,
+                compute_units,
             });
         }
 
@@ -419,18 +446,33 @@ pub mod cuda_ffi {
         ) -> c_int;
     }
 
+    // External CUDA runtime API declarations
+    extern "C" {
+        /// Get the number of CUDA devices available
+        pub fn cudaGetDeviceCount(count: *mut i32) -> i32;
+        
+        /// Get device properties
+        pub fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: i32) -> i32;
+    }
+
     /// Check if CUDA is available by trying to get device count
     pub fn is_cuda_available() -> bool {
-        // For now, assume CUDA is available if the library loads
-        // In a real implementation, this would call cudaGetDeviceCount
-        true
+        let mut count = 0;
+        unsafe {
+            cudaGetDeviceCount(&mut count) == 0 && count > 0
+        }
     }
 
     /// Get the number of CUDA devices
     pub fn get_device_count() -> Result<i32, String> {
-        // For now, return a mock device count
-        // In a real implementation, this would call cudaGetDeviceCount
-        Ok(1)
+        let mut count = 0;
+        let result = unsafe { cudaGetDeviceCount(&mut count) };
+        
+        if result == 0 {
+            Ok(count)
+        } else {
+            Err(format!("CUDA error getting device count: {}", result))
+        }
     }
 }
 
@@ -458,6 +500,12 @@ pub mod cuda_ffi {
     /// Get the number of CUDA devices
     pub fn get_device_count() -> Result<i32, String> {
         Err("CUDA support not compiled".to_string())
+    }
+
+    /// Stub function for getting device properties
+    #[allow(non_snake_case)]
+    pub unsafe fn cudaGetDeviceProperties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
+        -1 // Error code
     }
 }
 
