@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo::rustc-check-cfg=cfg(cuda_available)");
+    println!("cargo::rustc-check-cfg=cfg(opencl_available)");
     
     let features = env::var("CARGO_CFG_TARGET_FEATURES").unwrap_or_default();
     println!("cargo:rustc-cfg=features=\"{}\"", features);
@@ -24,25 +26,42 @@ fn main() {
             println!("cargo:rerun-if-changed={}", source);
         }
         
-        // Compile CUDA kernels
-        if let Err(e) = compile_cuda_kernels(&cuda_sources) {
-            println!("cargo:warning=CUDA kernel compilation failed: {}", e);
-            // Don't link CUDA libraries if compilation failed
-        } else {
-            println!("cargo:warning=CUDA kernels compiled successfully");
-            
-            // Link CUDA libraries only if compilation succeeded
-            println!("cargo:rustc-link-lib=cudart");
-            println!("cargo:rustc-link-lib=cuda");
-            
-            // Add CUDA library search paths
-            if let Ok(cuda_path) = env::var("CUDA_PATH") {
-                println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
-                println!("cargo:rustc-link-search=native={}/lib", cuda_path);
+        // Check if CUDA toolkit is available before attempting compilation
+        match find_nvcc() {
+            Ok(_) => {
+                // Compile CUDA kernels
+                match compile_cuda_kernels(&cuda_sources) {
+                    Ok(()) => {
+                        println!("cargo:warning=CUDA kernels compiled successfully");
+                        
+                        // Link CUDA libraries only if compilation succeeded
+                        println!("cargo:rustc-link-lib=cudart");
+                        println!("cargo:rustc-link-lib=cuda");
+                        
+                        // Add CUDA library search paths
+                        if let Ok(cuda_path) = env::var("CUDA_PATH") {
+                            println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
+                            println!("cargo:rustc-link-search=native={}/lib", cuda_path);
+                        }
+                        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+                        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
+                        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+                        
+                        // Set compile-time flag to indicate CUDA is available
+                        println!("cargo:rustc-cfg=cuda_available");
+                    },
+                    Err(e) => {
+                        println!("cargo:warning=CUDA kernel compilation failed: {}", e);
+                        println!("cargo:warning=Building without CUDA support. GPU operations will not be available.");
+                        // No CUDA linking when compilation fails
+                    }
+                }
+            },
+            Err(e) => {
+                println!("cargo:warning=CUDA toolkit not found: {}", e);
+                println!("cargo:warning=Building without CUDA support. Install CUDA toolkit for GPU acceleration.");
+                // No CUDA linking when nvcc is not available
             }
-            println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-            println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
-            println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
         }
     }
 
@@ -50,8 +69,18 @@ fn main() {
     if env::var("CARGO_FEATURE_OPENCL").is_ok() {
         println!("cargo:warning=Building with OpenCL support...");
         
-        // Link OpenCL libraries
-        println!("cargo:rustc-link-lib=OpenCL");
+        // Check if OpenCL libraries are available
+        if is_opencl_available() {
+            println!("cargo:rustc-cfg=opencl_available");
+            println!("cargo:warning=OpenCL libraries found successfully");
+        } else {
+            println!("cargo:warning=OpenCL libraries not found. Install OpenCL drivers for GPU support.");
+            println!("cargo:warning=Building with OpenCL feature enabled but libraries not available.");
+            println!("cargo:warning=Application will fail at runtime if OpenCL backend is used.");
+        }
+        // Note: Don't manually link OpenCL here - let opencl3 crate handle it
+        // The opencl3 crate will link to OpenCL, and if it's not available, 
+        // the application will fail at runtime with a clear error
     }
 }
 
@@ -147,4 +176,46 @@ fn find_nvcc() -> Result<String, String> {
     }
     
     Err("nvcc compiler not found. Please install CUDA toolkit or set CUDA_PATH environment variable.".to_string())
+}
+
+fn is_opencl_available() -> bool {
+    // Check for common OpenCL library locations
+    let opencl_paths = [
+        "/usr/lib/x86_64-linux-gnu/libOpenCL.so",
+        "/usr/lib/x86_64-linux-gnu/libOpenCL.so.1",
+        "/usr/lib/libOpenCL.so",
+        "/usr/lib/libOpenCL.so.1",
+        "/usr/local/lib/libOpenCL.so",
+        "/usr/local/lib/libOpenCL.so.1",
+        "/opt/intel/opencl/lib64/libOpenCL.so",
+        "/opt/intel/opencl/lib64/libOpenCL.so.1",
+    ];
+    
+    for path in &opencl_paths {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
+    }
+    
+    // Try to use pkg-config to find OpenCL
+    if let Ok(output) = std::process::Command::new("pkg-config")
+        .args(&["--exists", "OpenCL"])
+        .output()
+    {
+        if output.status.success() {
+            return true;
+        }
+    }
+    
+    // Check if clinfo command exists (indicates OpenCL runtime is available)
+    if let Ok(output) = std::process::Command::new("clinfo")
+        .arg("--version")
+        .output()
+    {
+        if output.status.success() {
+            return true;
+        }
+    }
+    
+    false
 }

@@ -29,8 +29,8 @@ struct CudaDeviceProperties {
     max_threads_per_block: i32,
 }
 
-// CUDA runtime API functions
-#[cfg(feature = "cuda")]
+// CUDA runtime API functions - only available when CUDA is compiled and available
+#[cfg(all(feature = "cuda", cuda_available))]
 extern "C" {
     fn cudaGetDeviceCount(count: *mut i32) -> i32;
     fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: i32) -> i32;
@@ -47,23 +47,23 @@ extern "C" {
     ) -> std::os::raw::c_int;
 }
 
-// Helper function names to avoid conflict
-#[cfg(feature = "cuda")]
+// Helper function names to avoid conflict - only available when CUDA is compiled and available
+#[cfg(all(feature = "cuda", cuda_available))]
 unsafe fn cuda_get_device_count(count: *mut i32) -> i32 {
     cudaGetDeviceCount(count)
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(all(feature = "cuda", cuda_available))]
 unsafe fn cuda_get_device_properties(prop: *mut CudaDeviceProperties, device: i32) -> i32 {
     cudaGetDeviceProperties(prop, device)
 }
 
-#[cfg(not(feature = "cuda"))]
+#[cfg(not(all(feature = "cuda", cuda_available)))]
 unsafe fn cuda_get_device_count(_count: *mut i32) -> i32 {
     -1
 }
 
-#[cfg(not(feature = "cuda"))]
+#[cfg(not(all(feature = "cuda", cuda_available)))]
 unsafe fn cuda_get_device_properties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
     -1
 }
@@ -124,8 +124,8 @@ impl CudaBackend {
         Err("CUDA support not compiled".to_string())
     }
 
-    /// Complete GPU pipeline: Mnemonic → Address with target matching
-    #[cfg(feature = "cuda")]
+    /// Complete GPU pipeline: Mnemonic → Address with target matching - only when CUDA is available
+    #[cfg(all(feature = "cuda", cuda_available))]
     fn gpu_complete_pipeline_batch(
         &self,
         mnemonics: &[String],
@@ -191,7 +191,7 @@ impl CudaBackend {
         Ok((addresses, matches))
     }
     
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(all(feature = "cuda", cuda_available)))]
     fn gpu_complete_pipeline_batch(
         &self,
         _mnemonics: &[String],
@@ -407,7 +407,7 @@ impl CudaBackend {
         }
 
         // Use GPU complete pipeline for maximum performance
-        #[cfg(feature = "cuda")]
+        #[cfg(all(feature = "cuda", cuda_available))]
         {
             match self.gpu_complete_pipeline_batch(
                 &mnemonics,
@@ -438,11 +438,16 @@ impl CudaBackend {
                         processed_count: mnemonics.len() as u128,
                     })
                 }
-                Err(_e) => {
-                    // Fall back to CPU processing if GPU fails
-                    self.execute_batch_cpu_fallback(start_offset, batch_size, target_address, _derivation_path, passphrase)
+                Err(e) => {
+                    // Return GPU error instead of falling back to CPU
+                    return Err(format!("CUDA GPU kernel execution failed: {}", e).into());
                 }
             }
+        }
+        
+        #[cfg(all(feature = "cuda", not(cuda_available)))]
+        {
+            return Err("CUDA toolkit not available at build time. Install CUDA toolkit and rebuild.".into());
         }
         
         #[cfg(not(feature = "cuda"))]
@@ -451,61 +456,6 @@ impl CudaBackend {
         }
     }
 
-    /// CPU fallback for when GPU processing fails
-    fn execute_batch_cpu_fallback(
-        &self,
-        start_offset: u128,
-        batch_size: u128,
-        target_address: &str,
-        derivation_path: &str,
-        passphrase: &str,
-    ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        #[cfg(not(feature = "cuda"))]
-        {
-            return Err("CUDA support not compiled. Use --features cuda to enable CUDA support.".into());
-        }
-
-        #[cfg(feature = "cuda")]
-        {
-            let word_space = self
-                .word_space
-                .as_ref()
-                .ok_or("Word space not initialized")?;
-
-            let mut processed_count = 0u128;
-            let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
-
-            for offset in start_offset..batch_end {
-                if let Some(word_indices) = word_space.index_to_words(offset) {
-                    if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                        match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
-                            Ok(address) => {
-                                if addresses_equal(&address, target_address) {
-                                    return Ok(GpuBatchResult {
-                                        mnemonic: Some(mnemonic),
-                                        address: Some(address),
-                                        offset: Some(offset),
-                                        processed_count: processed_count + 1,
-                                    });
-                                }
-                            }
-                            Err(_) => {
-                                // Skip invalid mnemonics silently for performance
-                            }
-                        }
-                    }
-                }
-                processed_count += 1;
-            }
-
-            Ok(GpuBatchResult {
-                mnemonic: None,
-                address: None,
-                offset: None,
-                processed_count,
-            })
-        }
-    }
 }
 
 impl GpuBackend for CudaBackend {
