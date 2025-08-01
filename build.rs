@@ -63,8 +63,21 @@ fn build_cuda_kernels() {
                 println!("cargo:rustc-link-search=native={}", out_dir);
                 println!("cargo:rustc-link-lib=dylib=cuda_kernels");
 
-                // Also link CUDA runtime
+                // Link CUDA runtime and driver libraries
                 println!("cargo:rustc-link-lib=dylib=cudart");
+                println!("cargo:rustc-link-lib=dylib=cuda");
+                
+                // Try to find CUDA library paths
+                if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+                    println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
+                    println!("cargo:rustc-link-search=native={}/lib", cuda_path);
+                } else {
+                    // Default CUDA paths
+                    println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+                    println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
+                    println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
+                    println!("cargo:rustc-link-search=native=/opt/cuda/lib");
+                }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 println!("cargo:warning=CUDA compilation failed: {}", stderr);

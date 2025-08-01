@@ -42,6 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("  --gpu-device <device_id>       Use specific GPU device (can be repeated)");
         eprintln!("  --multi-gpu                     Enable multi-GPU processing");
         eprintln!("  --stress-test                   Run comprehensive stress tests");
+        eprintln!("\nRecommended config file: example_test_config.json");
+        eprintln!("Example usage: {} --config example_test_config.json", args[0]);
         eprintln!("\nExample config:");
         let default_config = Config::default();
         println!("{}", serde_json::to_string_pretty(&default_config)?);
@@ -49,6 +51,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let config_path = &args[2];
+    
+    // Validate config file path and recommend example_test_config.json
+    if !std::path::Path::new(config_path).exists() {
+        eprintln!("Error: Config file '{}' not found", config_path);
+        eprintln!("Tip: Use 'example_test_config.json' for testing");
+        std::process::exit(1);
+    }
+    
+    if !config_path.ends_with("example_test_config.json") {
+        println!("Warning: Using config file '{}'. For testing, consider using 'example_test_config.json'", config_path);
+    }
+    
     let mut config = Config::load(config_path)?;
 
     // Parse command line arguments to override config
@@ -162,21 +176,45 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
     println!("Target address: {}", config.ethereum.target_address);
     println!("Derivation path: {}", config.ethereum.derivation_path);
 
-    // Initialize GPU manager
+    // Initialize GPU manager with enhanced error handling
     let mut gpu_manager = match GpuManager::from_config(config) {
         Ok(manager) => {
-            println!("GPU backend initialized: {}", manager.backend_name());
+            println!("✅ GPU backend initialized: {}", manager.backend_name());
             if manager.is_multi_gpu_enabled() {
                 println!(
-                    "Multi-GPU processing enabled with {} device(s)",
+                    "🔥 Multi-GPU processing enabled with {} device(s)",
                     manager.devices().len()
                 );
+                for device in manager.devices() {
+                    println!("   • Device {}: {} ({} MB memory, {} compute units)", 
+                        device.id, device.name, device.memory / 1024 / 1024, device.compute_units);
+                }
+            } else {
+                println!("🖥️  Single GPU processing with {} device(s)", manager.devices().len());
+                for device in manager.devices() {
+                    println!("   • Device {}: {} ({} MB memory, {} compute units)", 
+                        device.id, device.name, device.memory / 1024 / 1024, device.compute_units);
+                }
             }
             Some(manager)
         }
         Err(e) => {
-            println!("Warning: Failed to initialize GPU backend: {}", e);
-            println!("Falling back to CPU processing");
+            println!("⚠️  Failed to initialize GPU backend: {}", e);
+            println!("🔄 Falling back to CPU processing");
+            println!("   This may be significantly slower than GPU processing.");
+            
+            // Provide helpful troubleshooting tips
+            println!("\n💡 GPU Troubleshooting Tips:");
+            if config.gpu.as_ref().map(|g| &g.backend) == Some(&"cuda".to_string()) {
+                println!("   • For CUDA: Ensure NVIDIA drivers and CUDA toolkit are installed");
+                println!("   • Try: nvidia-smi to check GPU status");
+                println!("   • Try: nvcc --version to check CUDA installation");
+            } else {
+                println!("   • For OpenCL: Install OpenCL drivers for your GPU");
+                println!("   • Try: clinfo to check OpenCL installation");
+            }
+            println!("   • Try --gpu-backend cuda or --gpu-backend opencl to switch backends");
+            println!("   • Build with features: cargo build --features cuda,opencl\n");
             None
         }
     };
