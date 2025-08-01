@@ -84,12 +84,10 @@ fn build_cuda_kernels() {
     if !obj_files.is_empty() {
         println!("cargo:warning=CUDA kernels compiled successfully");
         
-        // Use cc crate to compile and link all the object files
-        let mut build = cc::Build::new();
+        // Instead of creating a library, directly link the object files
         for obj in &obj_files {
-            build.object(obj);
+            println!("cargo:rustc-link-arg={}", obj);
         }
-        build.compile("cuda_kernels");
         
     } else {
         println!("cargo:warning=No CUDA object files were created");
