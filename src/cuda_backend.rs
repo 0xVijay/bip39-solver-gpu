@@ -1,10 +1,8 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
-use crate::eth::addresses_equal;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::ffi::CString;
 use std::time::Instant;
 
 /// CUDA backend implementation with advanced error handling and failover
@@ -13,7 +11,6 @@ pub struct CudaBackend {
     word_space: Option<Arc<WordSpace>>,
     device_status: Arc<Mutex<Vec<DeviceStatus>>>,
     error_logger: ErrorLogger,
-    max_recovery_attempts: u32,
 }
 
 impl CudaBackend {
@@ -24,7 +21,6 @@ impl CudaBackend {
             word_space: None,
             device_status: Arc::new(Mutex::new(Vec::new())),
             error_logger: ErrorLogger::new(true), // Verbose logging for development
-            max_recovery_attempts: 3,
         }
     }
 
@@ -46,25 +42,6 @@ impl CudaBackend {
             // Simulate device check for non-CUDA builds
             Ok(())
         }
-    }
-
-    /// Attempt to recover a failed device
-    fn attempt_device_recovery(&self, device_id: u32) -> Result<(), GpuError> {
-        self.error_logger.log_recovery_attempt(device_id, "CUDA Device", 1);
-        
-        // In a real implementation, this would:
-        // 1. Reset device context
-        // 2. Reinitialize memory
-        // 3. Reload kernels
-        // 4. Verify device is responsive
-        
-        #[cfg(feature = "cuda")]
-        {
-            // Simulate recovery attempt
-            self.check_device_health(device_id)?;
-        }
-        
-        Ok(())
     }
 
     /// Get available healthy devices

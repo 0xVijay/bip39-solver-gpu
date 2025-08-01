@@ -34,7 +34,6 @@ fn build_cuda_kernels() {
     let kernel_files = ["pbkdf2.cu", "secp256k1.cu", "keccak256.cu"];
     let mut nvcc_args = vec![
         "-shared",
-        "-fPIC",
         "-O3",
         "--compiler-options",
         "-fPIC",
