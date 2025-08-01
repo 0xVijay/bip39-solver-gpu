@@ -1,17 +1,17 @@
 {
   "word_constraints": [
-    { "position": 0, "prefix": "fr", "words": ["frequent"] },
-    { "position": 1, "prefix": "lu", "words": ["lucky", "lunar"] },
-    { "position": 2, "prefix": "in", "words": ["inquiry"] },
-    { "position": 3, "prefix": "ve", "words": ["vendor", "velvet", "venue"] },
-    { "position": 4, "prefix": "en", "words": ["engine"] },
-    { "position": 5, "prefix": "dr", "words": ["dragon", "drastic", "drift"] },
-    { "position": 6, "prefix": "ho", "words": ["horse", "hotel", "honey"] },
-    { "position": 7, "prefix": "go", "words": ["gorilla"] },
-    { "position": 8, "prefix": "pe", "words": ["pear"] },
-    { "position": 9, "prefix": "ol", "words": ["old"] },
-    { "position": 10, "prefix": "da", "words": ["dance", "damage"] },
-    { "position": 11, "prefix": "sh", "words": ["shield"] }
+    { "position": 0, "words": ["fox", "field", "flame", "family", "frequent", "flower", "frost", "frame", "famous", "february", "fade"] },
+    { "position": 1, "words": ["lamp", "lava", "loop", "lunar", "lunch", "logic", "lobster", "lucky"] },
+    { "position": 2, "words": ["iron", "item", "issue", "inch", "index", "infant", "invest", "inquiry"] },
+    { "position": 3, "words": ["vivid", "vacuum", "valley", "verify", "vessel", "velvet", "vendor"] },
+    { "position": 4, "words": ["equal", "erase", "elegant", "engineer", "engine"] },
+    { "position": 5, "words": ["dust", "double", "dolphin", "dream", "dragon"] },
+    { "position": 6, "words": ["hill", "hammer", "hazard", "hotel", "horse"] },
+    { "position": 7, "words": ["glove", "grain", "giant", "guitar"] },
+    { "position": 8, "words": ["paint", "parrot", "panic", "peach", "pear"] },
+    { "position": 9, "words": ["yawn", "year", "yellow", "young", "old"] },
+    { "position": 10, "words": ["road", "rise", "ring", "run", "dance"] },
+    { "position": 11, "words": ["arrow", "asset", "attic", "armor", "shield"] }
   ],
   "ethereum": {
     "derivation_path": "m/44'/60'/0'/0/2",
@@ -22,7 +22,7 @@
   "slack": {
     "webhook_url": "https://hooks.slack.com/services///"
   },
-  "batch_size": 100000,
+  "batch_size": 10000000,
   "passphrase": "",
   "worker": {
     "server_url": "http://localhost:3000",
