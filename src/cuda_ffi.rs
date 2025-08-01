@@ -4,6 +4,17 @@
 #[cfg(feature = "cuda")]
 use std::os::raw::{c_char, c_int, c_uint};
 
+/// CUDA device properties structure
+#[cfg(feature = "cuda")]
+#[allow(dead_code)]
+#[repr(C)]
+pub struct CudaDeviceProperties {
+    pub name: [u8; 256],
+    pub total_global_mem: usize,
+    pub multiprocessor_count: i32,
+    pub max_threads_per_block: i32,
+}
+
 #[cfg(feature = "cuda")]
 extern "C" {
     // From pbkdf2.cu
@@ -54,6 +65,13 @@ extern "C" {
         match_results: *mut c_uint,
         count: c_uint,
     ) -> c_int;
+    
+    // CUDA runtime API functions
+    /// Get the number of CUDA devices available
+    pub fn cudaGetDeviceCount(count: *mut c_int) -> c_int;
+    
+    /// Get device properties
+    pub fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: c_int) -> c_int;
 }
 
 /// High-performance GPU PBKDF2-HMAC-SHA512 batch processing
@@ -306,7 +324,47 @@ pub fn gpu_fast_pipeline_batch(
     Ok(matches)
 }
 
+/// Check if CUDA is available by trying to get device count
+#[cfg(feature = "cuda")]
+pub fn is_cuda_available() -> bool {
+    let mut count = 0;
+    unsafe {
+        cudaGetDeviceCount(&mut count) == 0 && count > 0
+    }
+}
+
+/// Get the number of CUDA devices
+#[cfg(feature = "cuda")]
+pub fn get_device_count() -> Result<i32, String> {
+    let mut count = 0;
+    let result = unsafe { cudaGetDeviceCount(&mut count) };
+    
+    if result == 0 {
+        Ok(count)
+    } else {
+        Err(format!("CUDA error getting device count: {}", result))
+    }
+}
+
+/// Get CUDA device properties (wrapper for the extern function)
+#[cfg(feature = "cuda")]
+pub unsafe fn get_device_properties(prop: *mut CudaDeviceProperties, device: i32) -> i32 {
+    cudaGetDeviceProperties(prop, device as c_int)
+}
+
 /// Fallback stubs for non-CUDA builds
+
+/// CUDA device properties structure (stub)
+#[cfg(not(feature = "cuda"))]
+#[allow(dead_code)]
+#[repr(C)]
+pub struct CudaDeviceProperties {
+    pub name: [u8; 256],
+    pub total_global_mem: usize,
+    pub multiprocessor_count: i32,
+    pub max_threads_per_block: i32,
+}
+
 #[cfg(not(feature = "cuda"))]
 pub fn gpu_pbkdf2_batch(
     _mnemonics: &[String],
@@ -350,4 +408,23 @@ pub fn gpu_fast_pipeline_batch(
     _target_address: &[u8; 20],
 ) -> Result<Vec<bool>, String> {
     Err("CUDA support not compiled. Use --features cuda to enable GPU acceleration.".to_string())
+}
+
+/// Check if CUDA is available
+#[cfg(not(feature = "cuda"))]
+pub fn is_cuda_available() -> bool {
+    false
+}
+
+/// Get the number of CUDA devices
+#[cfg(not(feature = "cuda"))]
+pub fn get_device_count() -> Result<i32, String> {
+    Err("CUDA support not compiled".to_string())
+}
+
+/// Stub function for getting device properties
+#[cfg(not(feature = "cuda"))]
+#[allow(non_snake_case)]
+pub unsafe fn get_device_properties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
+    -1 // Error code
 }

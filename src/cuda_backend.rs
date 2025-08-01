@@ -8,6 +8,66 @@ use std::time::Instant;
 #[cfg(feature = "cuda")]
 use crate::eth::{derive_ethereum_address, addresses_equal};
 
+/// CUDA device properties structure
+#[cfg(feature = "cuda")]
+#[allow(dead_code)]
+#[repr(C)]
+struct CudaDeviceProperties {
+    name: [u8; 256],
+    total_global_mem: usize,
+    multiprocessor_count: i32,
+    max_threads_per_block: i32,
+}
+
+#[cfg(not(feature = "cuda"))]
+#[allow(dead_code)]
+#[repr(C)]
+struct CudaDeviceProperties {
+    name: [u8; 256],
+    total_global_mem: usize,
+    multiprocessor_count: i32,
+    max_threads_per_block: i32,
+}
+
+// CUDA runtime API functions
+#[cfg(feature = "cuda")]
+extern "C" {
+    fn cudaGetDeviceCount(count: *mut i32) -> i32;
+    fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: i32) -> i32;
+    
+    // GPU pipeline functions
+    fn cuda_complete_pipeline_host(
+        mnemonics: *const *const std::os::raw::c_char,
+        passphrases: *const *const std::os::raw::c_char,
+        address_indices: *const std::os::raw::c_uint,
+        target_address: *const u8,
+        found_addresses: *mut u8,
+        match_results: *mut std::os::raw::c_uint,
+        count: std::os::raw::c_uint,
+    ) -> std::os::raw::c_int;
+}
+
+// Helper function names to avoid conflict
+#[cfg(feature = "cuda")]
+unsafe fn cuda_get_device_count(count: *mut i32) -> i32 {
+    cudaGetDeviceCount(count)
+}
+
+#[cfg(feature = "cuda")]
+unsafe fn cuda_get_device_properties(prop: *mut CudaDeviceProperties, device: i32) -> i32 {
+    cudaGetDeviceProperties(prop, device)
+}
+
+#[cfg(not(feature = "cuda"))]
+unsafe fn cuda_get_device_count(_count: *mut i32) -> i32 {
+    -1
+}
+
+#[cfg(not(feature = "cuda"))]
+unsafe fn cuda_get_device_properties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
+    -1
+}
+
 /// CUDA backend implementation with advanced error handling and failover
 pub struct CudaBackend {
     initialized: bool,
@@ -30,6 +90,116 @@ impl CudaBackend {
     /// Set the word space for mnemonic generation
     pub fn set_word_space(&mut self, word_space: Arc<WordSpace>) {
         self.word_space = Some(word_space);
+    }
+
+    /// Check if CUDA is available by trying to get device count
+    #[cfg(feature = "cuda")]
+    fn is_cuda_available(&self) -> bool {
+        let mut count = 0;
+        unsafe {
+            cuda_get_device_count(&mut count) == 0 && count > 0
+        }
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn is_cuda_available(&self) -> bool {
+        false
+    }
+
+    /// Get the number of CUDA devices
+    #[cfg(feature = "cuda")]
+    fn get_device_count(&self) -> Result<i32, String> {
+        let mut count = 0;
+        let result = unsafe { cuda_get_device_count(&mut count) };
+        
+        if result == 0 {
+            Ok(count)
+        } else {
+            Err(format!("CUDA error getting device count: {}", result))
+        }
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn get_device_count(&self) -> Result<i32, String> {
+        Err("CUDA support not compiled".to_string())
+    }
+
+    /// Complete GPU pipeline: Mnemonic → Address with target matching
+    #[cfg(feature = "cuda")]
+    fn gpu_complete_pipeline_batch(
+        &self,
+        mnemonics: &[String],
+        passphrases: &[String],
+        address_indices: &[u32],
+        target_address: &[u8; 20],
+    ) -> Result<(Vec<[u8; 20]>, Vec<bool>), String> {
+        use std::os::raw::{c_char, c_uint};
+        
+        if mnemonics.len() != passphrases.len() || mnemonics.len() != address_indices.len() {
+            return Err("All input arrays must have same length".to_string());
+        }
+        
+        let count = mnemonics.len() as c_uint;
+        let mut found_addresses = vec![0u8; (count as usize) * 20];
+        let mut match_results = vec![0u32; count as usize];
+        
+        // Convert strings to C string pointers
+        let mnemonic_cstrings: Vec<std::ffi::CString> = mnemonics
+            .iter()
+            .map(|s| std::ffi::CString::new(s.as_str()).unwrap())
+            .collect();
+        let passphrase_cstrings: Vec<std::ffi::CString> = passphrases
+            .iter()
+            .map(|s| std::ffi::CString::new(s.as_str()).unwrap())
+            .collect();
+        
+        let mnemonic_ptrs: Vec<*const c_char> = mnemonic_cstrings
+            .iter()
+            .map(|cs| cs.as_ptr())
+            .collect();
+        let passphrase_ptrs: Vec<*const c_char> = passphrase_cstrings
+            .iter()
+            .map(|cs| cs.as_ptr())
+            .collect();
+        
+        unsafe {
+            let result = cuda_complete_pipeline_host(
+                mnemonic_ptrs.as_ptr(),
+                passphrase_ptrs.as_ptr(),
+                address_indices.as_ptr() as *const c_uint,
+                target_address.as_ptr(),
+                found_addresses.as_mut_ptr(),
+                match_results.as_mut_ptr(),
+                count,
+            );
+            
+            if result != 0 {
+                return Err("CUDA complete pipeline kernel execution failed".to_string());
+            }
+        }
+        
+        // Convert results
+        let mut addresses = Vec::new();
+        for i in 0..count as usize {
+            let mut address = [0u8; 20];
+            address.copy_from_slice(&found_addresses[i * 20..(i + 1) * 20]);
+            addresses.push(address);
+        }
+        
+        let matches: Vec<bool> = match_results.iter().map(|&r| r != 0).collect();
+        
+        Ok((addresses, matches))
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn gpu_complete_pipeline_batch(
+        &self,
+        _mnemonics: &[String],
+        _passphrases: &[String],
+        _address_indices: &[u32],
+        _target_address: &[u8; 20],
+    ) -> Result<(Vec<[u8; 20]>, Vec<bool>), String> {
+        Err("CUDA support not compiled. Use --features cuda to enable GPU acceleration.".to_string())
     }
 
     /// Check device health and update status
@@ -239,9 +409,7 @@ impl CudaBackend {
         // Use GPU complete pipeline for maximum performance
         #[cfg(feature = "cuda")]
         {
-            use crate::cuda_ffi;
-            
-            match cuda_ffi::gpu_complete_pipeline_batch(
+            match self.gpu_complete_pipeline_batch(
                 &mnemonics,
                 &passphrases,
                 &address_indices,
@@ -353,7 +521,7 @@ impl GpuBackend for CudaBackend {
         println!("Initializing CUDA backend with advanced error handling...");
 
         // Check if CUDA is available
-        if !cuda_ffi::is_cuda_available() {
+        if !self.is_cuda_available() {
             let error = GpuError::BackendUnavailable {
                 backend_name: "CUDA".to_string(),
                 reason: "CUDA runtime not available".to_string(),
@@ -364,7 +532,7 @@ impl GpuBackend for CudaBackend {
         }
 
         // Get device count to verify CUDA setup
-        match cuda_ffi::get_device_count() {
+        match self.get_device_count() {
             Ok(count) if count > 0 => {
                 println!("Found {} CUDA device(s)", count);
                 
@@ -422,20 +590,20 @@ impl GpuBackend for CudaBackend {
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
         println!("Enumerating CUDA devices...");
 
-        let device_count = cuda_ffi::get_device_count()
+        let device_count = self.get_device_count()
             .map_err(|e| format!("Failed to get CUDA device count: {}", e))?;
 
         let mut devices = Vec::new();
 
         for i in 0..device_count {
-            let mut properties = cuda_ffi::CudaDeviceProperties {
+            let mut properties = CudaDeviceProperties {
                 name: [0; 256],
                 total_global_mem: 0,
                 multiprocessor_count: 0,
                 max_threads_per_block: 0,
             };
 
-            let result = unsafe { cuda_ffi::cudaGetDeviceProperties(&mut properties, i) };
+            let result = unsafe { cuda_get_device_properties(&mut properties, i) };
             
             let (device_name, memory, compute_units) = if result == 0 {
                 // Extract device name from C-string
@@ -492,136 +660,13 @@ impl GpuBackend for CudaBackend {
 
     fn is_available(&self) -> bool {
         // Check if CUDA runtime is available
-        cuda_ffi::is_cuda_available() && cuda_ffi::get_device_count().unwrap_or(0) > 0
+        self.is_cuda_available() && self.get_device_count().unwrap_or(0) > 0
     }
 }
 
 impl Default for CudaBackend {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// CUDA FFI bindings (functional when CUDA feature is enabled)
-#[cfg(feature = "cuda")]
-pub mod cuda_ffi {
-    //! Foreign Function Interface bindings for CUDA kernels
-    //!
-    //! This module contains the Rust FFI bindings to call CUDA kernels
-    //! for PBKDF2, secp256k1, and Keccak-256 operations.
-
-    use std::os::raw::{c_char, c_int, c_uint};
-
-    #[allow(dead_code)]
-    #[repr(C)]
-    pub struct CudaDeviceProperties {
-        pub name: [u8; 256],
-        pub total_global_mem: usize,
-        pub multiprocessor_count: i32,
-        pub max_threads_per_block: i32,
-    }
-
-    // External CUDA function declarations
-    extern "C" {
-        /// PBKDF2-HMAC-SHA512 batch computation
-        pub fn cuda_pbkdf2_batch_host(
-            mnemonics: *const *const c_char,
-            passphrases: *const *const c_char,
-            seeds: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// secp256k1 public key derivation batch
-        pub fn cuda_secp256k1_pubkey_batch_host(
-            private_keys: *const u8,
-            public_keys: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// BIP32 hierarchical deterministic key derivation batch
-        pub fn cuda_bip32_derive_batch_host(
-            seeds: *const u8,
-            derivation_paths: *const c_uint,
-            private_keys: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// Keccak-256 address generation batch
-        pub fn cuda_keccak256_address_batch_host(
-            public_keys: *const u8,
-            addresses: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// Address comparison batch
-        pub fn cuda_compare_addresses_batch_host(
-            addresses: *const u8,
-            target: *const u8,
-            results: *mut c_uint,
-            count: c_uint,
-        ) -> c_int;
-    }
-
-    // External CUDA runtime API declarations
-    extern "C" {
-        /// Get the number of CUDA devices available
-        pub fn cudaGetDeviceCount(count: *mut i32) -> i32;
-        
-        /// Get device properties
-        pub fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: i32) -> i32;
-    }
-
-    /// Check if CUDA is available by trying to get device count
-    pub fn is_cuda_available() -> bool {
-        let mut count = 0;
-        unsafe {
-            cudaGetDeviceCount(&mut count) == 0 && count > 0
-        }
-    }
-
-    /// Get the number of CUDA devices
-    pub fn get_device_count() -> Result<i32, String> {
-        let mut count = 0;
-        let result = unsafe { cudaGetDeviceCount(&mut count) };
-        
-        if result == 0 {
-            Ok(count)
-        } else {
-            Err(format!("CUDA error getting device count: {}", result))
-        }
-    }
-}
-
-/// CUDA FFI bindings (stub when CUDA feature is disabled)
-#[cfg(not(feature = "cuda"))]
-pub mod cuda_ffi {
-    //! Foreign Function Interface bindings for CUDA kernels (disabled)
-    //!
-    //! This module provides stub implementations when CUDA is not available.
-
-    #[allow(dead_code)]
-    #[repr(C)]
-    pub struct CudaDeviceProperties {
-        pub name: [u8; 256],
-        pub total_global_mem: usize,
-        pub multiprocessor_count: i32,
-        pub max_threads_per_block: i32,
-    }
-
-    /// Check if CUDA is available
-    pub fn is_cuda_available() -> bool {
-        false
-    }
-
-    /// Get the number of CUDA devices
-    pub fn get_device_count() -> Result<i32, String> {
-        Err("CUDA support not compiled".to_string())
-    }
-
-    /// Stub function for getting device properties
-    #[allow(non_snake_case)]
-    pub unsafe fn cudaGetDeviceProperties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
-        -1 // Error code
     }
 }
 

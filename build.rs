@@ -27,11 +27,11 @@ fn main() {
         // Compile CUDA kernels
         if let Err(e) = compile_cuda_kernels(&cuda_sources) {
             println!("cargo:warning=CUDA kernel compilation failed: {}", e);
-            // Continue without CUDA support
+            // Don't link CUDA libraries if compilation failed
         } else {
             println!("cargo:warning=CUDA kernels compiled successfully");
             
-            // Link CUDA libraries
+            // Link CUDA libraries only if compilation succeeded
             println!("cargo:rustc-link-lib=cudart");
             println!("cargo:rustc-link-lib=cuda");
             

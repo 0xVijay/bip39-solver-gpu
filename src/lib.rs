@@ -1,5 +1,6 @@
 pub mod config;
 pub mod cuda_backend;
+#[cfg(any(feature = "cuda", not(feature = "cuda")))] // Always available
 pub mod cuda_ffi;
 pub mod error_handling;
 pub mod eth;
