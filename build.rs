@@ -15,14 +15,7 @@ fn main() {
     }
 }
 
-fn check_cuda_available() -> bool {
-    // Check if nvcc is available
-    Command::new("nvcc")
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
+
 
 fn build_cuda_kernels() {
     let out_dir = env::var("OUT_DIR").unwrap();

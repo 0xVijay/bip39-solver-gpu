@@ -1,17 +1,17 @@
 {
   "word_constraints": [
-    { "position": 0, "prefix": "fr", "words": ["frequent"] },
-    { "position": 1, "prefix": "lu", "words": ["lucky", "lunar"] },
-    { "position": 2, "prefix": "in", "words": ["inquiry"] },
-    { "position": 3, "prefix": "ve", "words": ["vendor", "velvet", "venue"] },
-    { "position": 4, "prefix": "en", "words": ["engine"] },
-    { "position": 5, "prefix": "dr", "words": ["dragon", "drastic", "drift"] },
-    { "position": 6, "prefix": "ho", "words": ["horse", "hotel", "honey"] },
-    { "position": 7, "prefix": "go", "words": ["gorilla"] },
-    { "position": 8, "prefix": "pe", "words": ["pear"] },
-    { "position": 9, "prefix": "ol", "words": ["old"] },
-    { "position": 10, "prefix": "da", "words": ["dance", "damage"] },
-    { "position": 11, "prefix": "sh", "words": ["shield"] }
+    { "position": 0, "prefix": "ab", "words": ["abandon", "ability", "able"] },
+    { "position": 1, "prefix": "ac", "words": ["access", "accident", "account"] },
+    { "position": 2, "prefix": "ac", "words": ["acquire", "across", "act"] },
+    { "position": 3, "prefix": "act", "words": ["action", "actor", "actress"] },
+    { "position": 4, "prefix": "ad", "words": ["adapt", "add", "addict"] },
+    { "position": 5, "prefix": "ad", "words": ["address", "adjust", "admit"] },
+    { "position": 6, "prefix": "ad", "words": ["adult", "advance", "advice"] },
+    { "position": 7, "prefix": "af", "words": ["affair", "afford", "afraid"] },
+    { "position": 8, "prefix": "ag", "words": ["again", "age", "agent"] },
+    { "position": 9, "prefix": "ab", "words": ["abandon", "ability"] },
+    { "position": 10, "prefix": "ac", "words": ["access", "account"] },
+    { "position": 11, "prefix": "ad", "words": ["adapt"] }
   ],
   "ethereum": {
     "derivation_path": "m/44'/60'/0'/0/2",

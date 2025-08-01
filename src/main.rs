@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 use std::env;
 use std::time::Instant;
+use std::io::Write;
 
 pub mod config;
 pub mod cuda_backend;
@@ -248,7 +249,9 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
     loop {
         let batch_end = std::cmp::min(current_offset + batch_size, word_space.total_combinations);
 
-        println!("Searching batch: {} to {}", current_offset, batch_end);
+        // Use carriage return to overwrite previous line for compact output
+        print!("\rSearching: {} to {} ", current_offset, batch_end);
+        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
         let result = if let Some(ref manager) = gpu_manager {
             // GPU processing
@@ -259,7 +262,7 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
         };
 
         if let Some(work_result) = result {
-            println!("🎉 Found matching mnemonic!");
+            println!("\n🎉 Found matching mnemonic!");
             println!("Mnemonic: {}", work_result.mnemonic);
             println!("Address: {}", work_result.address);
             println!("Offset: {}", work_result.offset);
@@ -283,18 +286,19 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
 
         current_offset = batch_end;
 
-        // Report progress
+        // Report progress with compact format
         let elapsed = start_time.elapsed();
         let rate = current_offset as f64 / elapsed.as_secs_f64();
 
-        println!(
-            "Progress: {}/{} ({:.2}%) - Rate: {:.2} mnemonics/sec - Elapsed: {:?}",
+        print!(
+            "\rProgress: {}/{} ({:.2}%) | Rate: {:.2} mnemonics/sec | Elapsed: {:.1}s",
             current_offset,
             word_space.total_combinations,
             (current_offset as f64 / word_space.total_combinations as f64) * 100.0,
             rate,
-            elapsed
+            elapsed.as_secs_f64()
         );
+        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
         // Periodically notify progress via Slack (every 10 minutes)
         if elapsed.as_secs() % 600 == 0 && elapsed.as_secs() > 0 {
@@ -305,7 +309,7 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
 
         // Check if we've searched everything
         if current_offset >= word_space.total_combinations {
-            println!("Search completed. No matching mnemonic found.");
+            println!("\nSearch completed. No matching mnemonic found.");
             break;
         }
     }

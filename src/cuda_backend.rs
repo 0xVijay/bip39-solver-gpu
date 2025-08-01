@@ -1,7 +1,5 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
-#[cfg(feature = "cuda")]
-use crate::eth::addresses_equal;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -191,6 +189,10 @@ impl CudaBackend {
                 _device_id, _start_offset, _batch_size, _target_address
             );
 
+            // Execute CUDA kernels in sequence with consolidated logging
+            print!("Executing kernels: PBKDF2 → BIP32 → secp256k1 → Keccak-256... ");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+
             // For demonstration, process a smaller batch to show functionality
             let actual_batch_size = std::cmp::min(_batch_size, 1000) as u32;
 
@@ -239,7 +241,6 @@ impl CudaBackend {
             let mut addresses = vec![0u8; mnemonics.len() * 20];
 
             // Execute CUDA kernels in sequence with error checking
-            println!("Executing PBKDF2 kernel...");
             let result = unsafe {
                 cuda_ffi::cuda_pbkdf2_batch_host(
                     mnemonic_ptrs.as_ptr(),
@@ -259,6 +260,7 @@ impl CudaBackend {
                 return Err("PBKDF2 kernel execution failed".into());
             }
 
+            println!("Executing BIP32 derivation kernel...");
             println!("Executing BIP32 derivation kernel...");
             let derivation_paths = vec![0u32; mnemonics.len()]; // Simplified
             let result = unsafe {
@@ -280,7 +282,6 @@ impl CudaBackend {
                 return Err("BIP32 derivation kernel execution failed".into());
             }
 
-            println!("Executing secp256k1 public key derivation kernel...");
             let result = unsafe {
                 cuda_ffi::cuda_secp256k1_pubkey_batch_host(
                     private_keys.as_ptr(),
@@ -299,7 +300,6 @@ impl CudaBackend {
                 return Err("secp256k1 kernel execution failed".into());
             }
 
-            println!("Executing Keccak-256 address generation kernel...");
             let result = unsafe {
                 cuda_ffi::cuda_keccak256_address_batch_host(
                     public_keys.as_ptr(),
@@ -317,6 +317,8 @@ impl CudaBackend {
             if result != 0 {
                 return Err("Keccak-256 kernel execution failed".into());
             }
+
+            println!("completed successfully.");
 
             // Check for target address match
             for (i, mnemonic) in mnemonics.iter().enumerate() {
