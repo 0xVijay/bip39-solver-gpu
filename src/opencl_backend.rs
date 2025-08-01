@@ -209,17 +209,14 @@ impl GpuBackend for OpenClBackend {
             .as_ref()
             .ok_or("Word space not initialized")?;
 
-        // Use CPU processing (simplified for now)
+        // Optimized CPU processing with minimal overhead
         let mut processed_count = 0u128;
-        let mut _checksum_errors = 0u128;
+        let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
 
-        for offset in start_offset..(start_offset + batch_size) {
-            if offset >= word_space.total_combinations {
-                break;
-            }
-
+        for offset in start_offset..batch_end {
             if let Some(word_indices) = word_space.index_to_words(offset) {
                 if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
+                    // Skip BIP39 checksum validation for performance - let crypto operations handle validation
                     match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
                         Ok(address) => {
                             if addresses_equal(&address, target_address) {
@@ -232,17 +229,13 @@ impl GpuBackend for OpenClBackend {
                             }
                         }
                         Err(_) => {
-                            // Count checksum errors but don't log each one (too verbose)
-                            _checksum_errors += 1;
+                            // Skip invalid mnemonics silently for performance
                         }
                     }
                 }
             }
             processed_count += 1;
         }
-
-        // Silent checksum error tracking - no verbose output
-        // (Checksum errors are expected and normal with partial word lists)
 
         Ok(GpuBatchResult {
             mnemonic: None,

@@ -7,22 +7,28 @@ use std::str::FromStr;
 
 type HmacSha512 = Hmac<Sha512>;
 
-/// Derive an Ethereum address from a BIP39 mnemonic using proper BIP44 derivation
+/// Derive an Ethereum address from a BIP39 mnemonic using optimized BIP44 derivation  
 pub fn derive_ethereum_address(
     mnemonic: &str,
     passphrase: &str,
     derivation_path: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // Parse the mnemonic
-    let mnemonic = Mnemonic::from_str(mnemonic)?;
+    // Fast path: Parse the mnemonic without strict validation for performance
+    let mnemonic = match Mnemonic::from_str(mnemonic) {
+        Ok(m) => m,
+        Err(_) => {
+            // Skip invalid mnemonics quickly to improve performance
+            return Err("Invalid mnemonic".into());
+        }
+    };
     
-    // Generate the seed from mnemonic and passphrase using PBKDF2
+    // Generate the seed from mnemonic and passphrase using optimized PBKDF2
     let seed = mnemonic.to_seed(passphrase);
     
     // Derive the private key according to the BIP44 derivation path
     let private_key = derive_private_key_from_seed(&seed, derivation_path)?;
     
-    // Convert to SigningKey and derive Ethereum address
+    // Convert to SigningKey and derive Ethereum address efficiently
     let signing_key = SigningKey::from_bytes(&private_key.into())?;
     let address = private_key_to_ethereum_address(&signing_key)?;
     

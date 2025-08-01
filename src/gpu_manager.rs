@@ -8,6 +8,9 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+// Import GPU memory functions directly
+use crate::gpu_memory::{calculate_optimal_batch_size, get_memory_info};
+
 /// GPU manager for handling multiple GPU backends and devices with advanced error handling
 pub struct GpuManager {
     backend: Box<dyn GpuBackend>,
@@ -200,6 +203,27 @@ impl GpuManager {
         } else {
             Vec::new()
         }
+    }
+
+    /// Get optimal batch size for a specific device
+    pub fn get_optimal_batch_size(&self, device_id: u32) -> Option<u128> {
+        self.devices.iter()
+            .find(|device| device.id == device_id)
+            .map(|device| calculate_optimal_batch_size(device))
+    }
+
+    /// Get optimal batch size for all devices
+    pub fn get_optimal_batch_sizes(&self) -> Vec<(u32, u128)> {
+        self.devices.iter()
+            .map(|device| (device.id, calculate_optimal_batch_size(device)))
+            .collect()
+    }
+
+    /// Get memory info for a device and batch size
+    pub fn get_device_memory_info(&self, device_id: u32, batch_size: u128) -> Option<String> {
+        self.devices.iter()
+            .find(|device| device.id == device_id)
+            .map(|device| get_memory_info(device, batch_size))
     }
 
     /// Find alternative device for failover

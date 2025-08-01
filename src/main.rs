@@ -8,6 +8,7 @@ pub mod error_handling;
 pub mod eth;
 pub mod gpu_backend;
 pub mod gpu_manager;
+pub mod gpu_memory;
 pub mod job_server;
 pub mod job_types;
 pub mod opencl_backend;
@@ -241,17 +242,37 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
     }
 
     let start_time = Instant::now();
-    let batch_size = config.batch_size as u128;
+    
+    // Use dynamic batch sizing based on GPU memory
+    let optimal_batch_sizes = if let Some(ref manager) = gpu_manager {
+        manager.get_optimal_batch_sizes()
+    } else {
+        vec![]
+    };
+    
+    // Use the largest optimal batch size or fallback to config
+    let dynamic_batch_size = optimal_batch_sizes.iter()
+        .map(|(_, size)| *size)
+        .max()
+        .unwrap_or(config.batch_size as u128);
+    
+    println!("📊 Using dynamic batch sizing:");
+    if let Some(ref manager) = gpu_manager {
+        for (device_id, batch_size) in &optimal_batch_sizes {
+            if let Some(memory_info) = manager.get_device_memory_info(*device_id, *batch_size) {
+                println!("   • Device {}: {} batch size - {}", device_id, batch_size, memory_info);
+            }
+        }
+    }
+    
     let mut current_offset = 0u128;
 
     // Main search loop
     loop {
-        let batch_end = std::cmp::min(current_offset + batch_size, word_space.total_combinations);
-
-        // Clean progress reporting - don't print individual batch ranges
+        let batch_end = std::cmp::min(current_offset + dynamic_batch_size, word_space.total_combinations);
 
         let result = if let Some(ref manager) = gpu_manager {
-            // GPU processing
+            // GPU processing with optimal batch size
             search_with_gpu(manager, current_offset, batch_end - current_offset, config)?
         } else {
             // CPU fallback processing
