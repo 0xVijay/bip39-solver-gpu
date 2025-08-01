@@ -160,7 +160,7 @@ impl CudaBackend {
         })
     }
 
-    /// Internal batch execution with optimized GPU processing
+    /// Internal batch execution with GPU-optimized processing
     fn execute_batch_internal(
         &self,
         _device_id: u32,
@@ -170,12 +170,131 @@ impl CudaBackend {
         _derivation_path: &str,
         _passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
+        // Use GPU-optimized processing with real CUDA kernels
+        self.execute_batch_gpu_optimized(
+            _start_offset,
+            _batch_size,
+            _target_address,
+            _derivation_path,
+            _passphrase,
+        )
+    }
+
+    /// GPU-optimized batch execution using CUDA kernels
+    fn execute_batch_gpu_optimized(
+        &self,
+        start_offset: u128,
+        batch_size: u128,
+        target_address: &str,
+        _derivation_path: &str,
+        passphrase: &str,
+    ) -> Result<GpuBatchResult, Box<dyn Error>> {
+        let word_space = self
+            .word_space
+            .as_ref()
+            .ok_or("Word space not initialized")?;
+
+        // Convert target address to bytes
+        let target_bytes = if target_address.starts_with("0x") || target_address.starts_with("0X") {
+            hex::decode(&target_address[2..])
+                .map_err(|_| "Invalid target address format")?
+        } else {
+            hex::decode(target_address)
+                .map_err(|_| "Invalid target address format")?
+        };
+        
+        if target_bytes.len() != 20 {
+            return Err("Target address must be 20 bytes".into());
+        }
+        
+        let mut target_address_array = [0u8; 20];
+        target_address_array.copy_from_slice(&target_bytes);
+
+        // Generate mnemonics for this batch
+        let mut mnemonics = Vec::new();
+        let mut passphrases = Vec::new();
+        let mut address_indices = Vec::new();
+        
+        let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
+        
+        for offset in start_offset..batch_end {
+            if let Some(word_indices) = word_space.index_to_words(offset) {
+                if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
+                    mnemonics.push(mnemonic);
+                    passphrases.push(passphrase.to_string());
+                    address_indices.push(2); // BIP44 address index (m/44'/60'/0'/0/2)
+                }
+            }
+        }
+
+        if mnemonics.is_empty() {
+            return Ok(GpuBatchResult {
+                mnemonic: None,
+                address: None,
+                offset: None,
+                processed_count: 0,
+            });
+        }
+
+        // Use GPU complete pipeline for maximum performance
+        #[cfg(feature = "cuda")]
+        {
+            use crate::cuda_ffi;
+            
+            match cuda_ffi::gpu_complete_pipeline_batch(
+                &mnemonics,
+                &passphrases,
+                &address_indices,
+                &target_address_array,
+            ) {
+                Ok((addresses, matches)) => {
+                    // Check for matches
+                    for (i, &is_match) in matches.iter().enumerate() {
+                        if is_match {
+                            let found_offset = start_offset + i as u128;
+                            let address_hex = format!("0x{}", hex::encode(&addresses[i]));
+                            
+                            return Ok(GpuBatchResult {
+                                mnemonic: Some(mnemonics[i].clone()),
+                                address: Some(address_hex),
+                                offset: Some(found_offset),
+                                processed_count: mnemonics.len() as u128,
+                            });
+                        }
+                    }
+                    
+                    Ok(GpuBatchResult {
+                        mnemonic: None,
+                        address: None,
+                        offset: None,
+                        processed_count: mnemonics.len() as u128,
+                    })
+                }
+                Err(_e) => {
+                    // Fall back to CPU processing if GPU fails
+                    self.execute_batch_cpu_fallback(start_offset, batch_size, target_address, _derivation_path, passphrase)
+                }
+            }
+        }
+        
         #[cfg(not(feature = "cuda"))]
         {
-            // Return error when CUDA is not compiled
-            return Err(
-                "CUDA support not compiled. Use --features cuda to enable CUDA support.".into(),
-            );
+            return Err("CUDA support not compiled. Use --features cuda to enable CUDA support.".into());
+        }
+    }
+
+    /// CPU fallback for when GPU processing fails
+    fn execute_batch_cpu_fallback(
+        &self,
+        start_offset: u128,
+        batch_size: u128,
+        target_address: &str,
+        derivation_path: &str,
+        passphrase: &str,
+    ) -> Result<GpuBatchResult, Box<dyn Error>> {
+        #[cfg(not(feature = "cuda"))]
+        {
+            return Err("CUDA support not compiled. Use --features cuda to enable CUDA support.".into());
         }
 
         #[cfg(feature = "cuda")]
@@ -185,18 +304,15 @@ impl CudaBackend {
                 .as_ref()
                 .ok_or("Word space not initialized")?;
 
-            // Optimized GPU processing with minimal CPU overhead
             let mut processed_count = 0u128;
-            let batch_end = (_start_offset + _batch_size).min(word_space.total_combinations);
+            let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
 
-            // Process in chunks to optimize performance
-            for offset in _start_offset..batch_end {
+            for offset in start_offset..batch_end {
                 if let Some(word_indices) = word_space.index_to_words(offset) {
                     if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                        // Skip BIP39 checksum validation for performance - let crypto operations handle validation
-                        match derive_ethereum_address(&mnemonic, _passphrase, _derivation_path) {
+                        match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
                             Ok(address) => {
-                                if addresses_equal(&address, _target_address) {
+                                if addresses_equal(&address, target_address) {
                                     return Ok(GpuBatchResult {
                                         mnemonic: Some(mnemonic),
                                         address: Some(address),

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod cuda_backend;
+pub mod cuda_ffi;
 pub mod error_handling;
 pub mod eth;
 pub mod gpu_backend;

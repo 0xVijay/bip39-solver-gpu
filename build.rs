@@ -1,106 +1,150 @@
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
-    println!("cargo:rerun-if-changed=cuda/");
+    println!("cargo:rerun-if-changed=build.rs");
+    
+    let features = env::var("CARGO_CFG_TARGET_FEATURES").unwrap_or_default();
+    println!("cargo:rustc-cfg=features=\"{}\"", features);
 
-    // Only build CUDA kernels if CUDA feature is explicitly enabled
-    if std::env::var("CARGO_FEATURE_CUDA").is_ok() {
-        build_cuda_kernels();
-    } else {
-        println!(
-            "cargo:warning=CUDA feature not enabled, skipping CUDA kernel compilation"
-        );
+    // Check if CUDA feature is enabled
+    if env::var("CARGO_FEATURE_CUDA").is_ok() {
+        println!("cargo:warning=Building CUDA kernels...");
+        
+        // Build all CUDA kernels
+        let cuda_sources = [
+            "cuda/pbkdf2.cu",
+            "cuda/bip32.cu", 
+            "cuda/secp256k1.cu",
+            "cuda/keccak256.cu",
+            "cuda/gpu_pipeline.cu",
+        ];
+        
+        for source in &cuda_sources {
+            println!("cargo:rerun-if-changed={}", source);
+        }
+        
+        // Compile CUDA kernels
+        if let Err(e) = compile_cuda_kernels(&cuda_sources) {
+            println!("cargo:warning=CUDA kernel compilation failed: {}", e);
+            // Continue without CUDA support
+        } else {
+            println!("cargo:warning=CUDA kernels compiled successfully");
+            
+            // Link CUDA libraries
+            println!("cargo:rustc-link-lib=cudart");
+            println!("cargo:rustc-link-lib=cuda");
+            
+            // Add CUDA library search paths
+            if let Ok(cuda_path) = env::var("CUDA_PATH") {
+                println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
+                println!("cargo:rustc-link-search=native={}/lib", cuda_path);
+            }
+            println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+            println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
+            println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+        }
+    }
+
+    // Check if OpenCL feature is enabled  
+    if env::var("CARGO_FEATURE_OPENCL").is_ok() {
+        println!("cargo:warning=Building with OpenCL support...");
+        
+        // Link OpenCL libraries
+        println!("cargo:rustc-link-lib=OpenCL");
     }
 }
 
-
-
-fn build_cuda_kernels() {
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let cuda_dir = PathBuf::from("cuda");
-
-    println!("cargo:warning=Building CUDA kernels...");
-
-    // Compile CUDA kernels directly into object files and link them manually
-    let kernel_files = ["pbkdf2.cu", "secp256k1.cu", "keccak256.cu"];
+fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
+    let out_dir = env::var("OUT_DIR").map_err(|e| format!("OUT_DIR not set: {}", e))?;
+    let out_path = PathBuf::from(&out_dir);
     
-    // Link CUDA runtime libraries - use static runtime for better compatibility
-    println!("cargo:rustc-link-lib=static=cudart_static");
-    println!("cargo:rustc-link-lib=dylib=cuda");
+    // Find nvcc compiler
+    let nvcc = find_nvcc()?;
     
-    // Static CUDA runtime requires additional system libraries
-    println!("cargo:rustc-link-lib=dylib=pthread");
-    println!("cargo:rustc-link-lib=dylib=dl");
-    println!("cargo:rustc-link-lib=dylib=rt");
-    
-    // Add CUDA library search paths
-    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
-        println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
-        println!("cargo:rustc-link-search=native={}/lib", cuda_path);
-    } else {
-        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
-        println!("cargo:rustc-link-search=native=/opt/cuda/lib64");
-        println!("cargo:rustc-link-search=native=/opt/cuda/lib");
+    for source in sources {
+        let source_path = PathBuf::from(source);
+        let object_name = source_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| format!("Invalid source file: {}", source))?;
+        let object_path = out_path.join(format!("{}.o", object_name));
+        
+        println!("cargo:warning=Compiling CUDA kernel: {}", source);
+        
+        let output = std::process::Command::new(&nvcc)
+            .args(&[
+                "-c",
+                source,
+                "-o", object_path.to_str().unwrap(),
+                "--compiler-options", "-fPIC",
+                "-arch=sm_50",  // Compatible with most modern GPUs
+                "-O3",          // Optimize for performance
+                "--std=c++11",  // C++11 standard
+                "-Xptxas", "-O3", // PTX optimization
+                "-lineinfo",    // Debug info
+            ])
+            .output()
+            .map_err(|e| format!("Failed to execute nvcc: {}", e))?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("nvcc compilation failed for {}: {}", source, stderr));
+        }
+        
+        // Create a static library from the object file
+        let lib_name = format!("lib{}.a", object_name);
+        let lib_path = out_path.join(&lib_name);
+        
+        let ar_output = std::process::Command::new("ar")
+            .args(&["rcs", lib_path.to_str().unwrap(), object_path.to_str().unwrap()])
+            .output()
+            .map_err(|e| format!("Failed to create static library: {}", e))?;
+        
+        if !ar_output.status.success() {
+            let stderr = String::from_utf8_lossy(&ar_output.stderr);
+            return Err(format!("ar failed for {}: {}", object_name, stderr));
+        }
+        
+        // Tell cargo to link the static library
+        println!("cargo:rustc-link-search=native={}", out_dir);
+        println!("cargo:rustc-link-lib=static={}", object_name);
     }
     
-    // Add system library paths where libcuda.so is typically located
-    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
-    println!("cargo:rustc-link-search=native=/usr/lib64");
-    println!("cargo:rustc-link-search=native=/usr/lib");
+    Ok(())
+}
+
+fn find_nvcc() -> Result<String, String> {
+    // Try different common locations for nvcc
+    let nvcc_paths = [
+        "nvcc",
+        "/usr/local/cuda/bin/nvcc",
+        "/usr/local/cuda-11/bin/nvcc",
+        "/usr/local/cuda-12/bin/nvcc",
+        "/opt/cuda/bin/nvcc",
+    ];
     
-    // Compile each CUDA file to separate object files, then use cc to link them
-    let mut obj_files = Vec::new();
-    
-    for kernel in &kernel_files {
-        let kernel_path = cuda_dir.join(kernel);
-        let obj_name = kernel.replace(".cu", ".o");
-        let obj_path = format!("{}/{}", out_dir, obj_name);
-        
-        let nvcc_args = vec![
-            "-c",
-            "-O3",
-            "--compiler-options", "-fPIC",
-            kernel_path.to_str().unwrap(),
-            "-o", &obj_path
-        ];
-        
-        let result = Command::new("nvcc").args(&nvcc_args).output();
-        match result {
-            Ok(output) if output.status.success() => {
-                obj_files.push(obj_path);
-            },
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                println!("cargo:warning=CUDA compilation failed for {}: {}", kernel, stderr);
-                return;
-            },
-            Err(e) => {
-                println!("cargo:warning=Failed to run nvcc for {}: {}", kernel, e);
-                return;
-            }
+    for path in &nvcc_paths {
+        if std::process::Command::new(path)
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            return Ok(path.to_string());
         }
     }
     
-    if !obj_files.is_empty() {
-        println!("cargo:warning=CUDA kernels compiled successfully");
-        
-        // Instead of creating a library, directly link the object files
-        for obj in &obj_files {
-            println!("cargo:rustc-link-arg={}", obj);
+    // Check CUDA_PATH environment variable
+    if let Ok(cuda_path) = env::var("CUDA_PATH") {
+        let nvcc_path = format!("{}/bin/nvcc", cuda_path);
+        if std::process::Command::new(&nvcc_path)
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            return Ok(nvcc_path);
         }
-        
-        // Link CUDA static runtime directly using full path since cargo:rustc-link-lib isn't working
-        println!("cargo:rustc-link-arg=/usr/local/cuda/lib64/libcudart_static.a");
-        
-        // Force link with standard libs to provide atexit
-        println!("cargo:rustc-link-arg=-Wl,--as-needed");
-        println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
-        println!("cargo:rustc-link-arg=-lc");
-        
-    } else {
-        println!("cargo:warning=No CUDA object files were created");
     }
+    
+    Err("nvcc compiler not found. Please install CUDA toolkit or set CUDA_PATH environment variable.".to_string())
 }
