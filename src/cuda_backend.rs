@@ -5,9 +5,6 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-#[cfg(feature = "cuda")]
-use crate::eth::{derive_ethereum_address, addresses_equal};
-
 /// CUDA device properties structure
 #[cfg(feature = "cuda")]
 #[allow(dead_code)]
