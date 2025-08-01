@@ -38,7 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("\nOptions:");
         eprintln!("  --worker                    Run as distributed worker");
         eprintln!("  --stress-test               Run comprehensive stress tests");
-        eprintln!("\nExample usage: {} --config example_test_config.json", args[0]);
+        eprintln!("  --gpu-backend <backend>     Force specific GPU backend (cuda/opencl)");
+        eprintln!("  --gpu-device <id>           Use specific GPU device ID");
+        eprintln!("  --multi-gpu                 Enable multi-GPU processing");
+        eprintln!("  --single-gpu                Disable multi-GPU processing");
+        eprintln!("\nExamples:");
+        eprintln!("  {} --config example_test_config.json", args[0]);
+        eprintln!("  {} --config example_test_config.json --gpu-backend cuda --multi-gpu", args[0]);
         std::process::exit(1);
     }
 
@@ -50,21 +56,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     
-    let config = Config::load(config_path)?;
+    let mut config = Config::load(config_path)?;
 
-    // Parse simple command line arguments
+    // Parse command line arguments for GPU control
     let mut run_as_worker = false;
     let mut run_stress_test = false;
+    let mut force_backend: Option<String> = None;
+    let mut force_device: Option<u32> = None;
+    let mut force_multi_gpu: Option<bool> = None;
 
-    for arg in args.iter().skip(3) {
-        match arg.as_str() {
+    let mut i = 3;
+    while i < args.len() {
+        match args[i].as_str() {
             "--worker" => run_as_worker = true,
             "--stress-test" => run_stress_test = true,
+            "--gpu-backend" => {
+                if i + 1 < args.len() {
+                    force_backend = Some(args[i + 1].clone());
+                    i += 1;
+                } else {
+                    eprintln!("Error: --gpu-backend requires a value (cuda/opencl)");
+                    std::process::exit(1);
+                }
+            },
+            "--gpu-device" => {
+                if i + 1 < args.len() {
+                    match args[i + 1].parse::<u32>() {
+                        Ok(device_id) => force_device = Some(device_id),
+                        Err(_) => {
+                            eprintln!("Error: --gpu-device requires a numeric device ID");
+                            std::process::exit(1);
+                        }
+                    }
+                    i += 1;
+                } else {
+                    eprintln!("Error: --gpu-device requires a device ID");
+                    std::process::exit(1);
+                }
+            },
+            "--multi-gpu" => force_multi_gpu = Some(true),
+            "--single-gpu" => force_multi_gpu = Some(false),
             _ => {
-                eprintln!("Unknown argument: {}", arg);
+                eprintln!("Unknown argument: {}", args[i]);
                 std::process::exit(1);
             }
         }
+        i += 1;
+    }
+
+    // Override config with command line options
+    if force_backend.is_some() || force_device.is_some() || force_multi_gpu.is_some() {
+        let mut gpu_config = config.gpu.unwrap_or_default();
+        
+        if let Some(backend) = force_backend {
+            gpu_config.backend = backend;
+        }
+        
+        if let Some(device_id) = force_device {
+            gpu_config.devices = vec![device_id];
+        }
+        
+        if let Some(multi_gpu) = force_multi_gpu {
+            gpu_config.multi_gpu = multi_gpu;
+        }
+        
+        config.gpu = Some(gpu_config);
     }
 
     // Handle stress testing mode
@@ -76,20 +132,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Run as distributed worker
         worker_client::run_worker(&config, None)?;
     } else {
-        // Run standalone version with automatic GPU detection
-        run_standalone(&config, config_path)?;
+        // Run standalone version - auto-detect or use specified backend
+        if config.gpu.is_some() {
+            // Use user-specified configuration
+            run_standalone_with_config(&config, config_path)?;
+        } else {
+            // Auto-detect best available GPU backend
+            run_standalone_auto_detect(&config, config_path)?;
+        }
     }
 
     Ok(())
 }
 
-fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn run_standalone_with_config(config: &Config, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Loaded config from: {}", config_path);
+    println!("Target address: {}", config.ethereum.target_address);
+    println!("Derivation path: {}", config.ethereum.derivation_path);
+
+    // Initialize GPU backend from config
+    let mut gpu_manager = GpuManager::from_config(config)?;
+    
+    run_search_loop(&mut gpu_manager, config, config_path)
+}
+
+fn run_standalone_auto_detect(config: &Config, config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Loaded config from: {}", config_path);
     println!("Target address: {}", config.ethereum.target_address);
     println!("Derivation path: {}", config.ethereum.derivation_path);
 
     // Auto-detect and initialize the best available GPU backend
     let mut gpu_manager = auto_detect_best_gpu_backend(config)?;
+    
+    run_search_loop(&mut gpu_manager, config, config_path)
+}
+
+fn run_search_loop(gpu_manager: &mut GpuManager, config: &Config, _config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     
     println!("✅ GPU backend initialized: {}", gpu_manager.backend_name());
     if gpu_manager.is_multi_gpu_enabled() {
@@ -320,7 +398,7 @@ fn run_stress_tests(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Comprehensive CUDA error checking for all FFI calls");
     println!("   • Device health monitoring and failure detection");
     println!("   • Automatic failover from failed devices to healthy ones");
-    println!("   • Graceful CPU fallback when all GPUs fail");
+    println!("   • Graceful error handling when all GPUs fail");
     println!("   • Structured logging with device info and timestamps");
     println!("   • Edge-case and stress testing for huge batch sizes");
     println!("   • Out-of-memory scenario handling");

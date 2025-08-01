@@ -23,14 +23,33 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "Installing OpenCL development headers..."
     sudo apt-get install -y ocl-icd-opencl-dev clinfo
     
-    # Install CUDA toolkit (for better GPU support)
-    echo "Installing NVIDIA CUDA toolkit..."
-    sudo apt-get install -y nvidia-cuda-toolkit nvidia-driver-470 || {
-        echo "Warning: CUDA installation failed. Trying alternative method..."
-        # Try downloading CUDA from NVIDIA (more reliable)
-        wget https://developer.download.nvidia.com/compute/cuda/12.2.2/local_installers/cuda_12.2.2_535.104.05_linux.run || {
-            echo "Note: CUDA download failed. Will try to build with existing drivers."
+    # Install CUDA toolkit via apt (more reliable than run file)
+    echo "Installing NVIDIA CUDA toolkit via apt..."
+    
+    # Add NVIDIA package repositories
+    sudo apt-get install -y software-properties-common
+    
+    # Install CUDA toolkit from Ubuntu repositories
+    sudo apt-get install -y nvidia-cuda-toolkit || {
+        echo "Warning: Ubuntu CUDA package failed. Trying NVIDIA repositories..."
+        
+        # Try NVIDIA's official repository
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb || {
+            echo "Note: CUDA keyring download failed"
         }
+        
+        if [ -f "cuda-keyring_1.0-1_all.deb" ]; then
+            sudo dpkg -i cuda-keyring_1.0-1_all.deb
+            sudo apt-get update
+            sudo apt-get install -y cuda-toolkit-12-2 || {
+                echo "Note: CUDA installation failed. Will build with existing drivers."
+            }
+        fi
+    }
+    
+    # Install NVIDIA drivers if not present
+    sudo apt-get install -y nvidia-driver-535 || {
+        echo "Note: NVIDIA driver installation failed or drivers already present."
     }
     
     # Install build essentials
