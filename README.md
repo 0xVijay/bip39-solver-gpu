@@ -110,60 +110,130 @@ Add GPU-specific settings to enable acceleration:
 
 ## Usage
 
-### Command Line Interface
+### Basic Usage
 
+#### Quick Start (Recommended)
 ```bash
-# Basic usage with OpenCL
-./bip39-solver-gpu --config config.json
+# Use the provided test configuration
+./target/release/bip39-solver-gpu --config example_test_config.json
 
 # Override GPU backend
-./bip39-solver-gpu --config config.json --gpu-backend cuda
+./target/release/bip39-solver-gpu --config example_test_config.json --gpu-backend cuda
 
-# Specify GPU devices
-./bip39-solver-gpu --config config.json --gpu-device 0 --gpu-device 1
-
-# Enable multi-GPU processing
-./bip39-solver-gpu --config config.json --multi-gpu
-
-# Run as distributed worker
-./bip39-solver-gpu --config config.json --mode worker
+# Run stress tests to validate GPU functionality
+./target/release/bip39-solver-gpu --config example_test_config.json --stress-test
 ```
 
-### CLI Options
+#### Command Line Options
 
-- `--mode <standalone|worker>` - Set processing mode (default: standalone)
-- `--gpu-backend <opencl|cuda>` - Set GPU backend (overrides config)
-- `--gpu-device <device_id>` - Use specific GPU device (can be repeated)
-- `--multi-gpu` - Enable multi-GPU processing
-- `--stress-test` - Run comprehensive stress tests and error handling validation
+The CLI now provides enhanced GPU control and error handling:
+
+```bash
+# Basic usage with recommended config
+./target/release/bip39-solver-gpu --config example_test_config.json
+
+# GPU backend selection
+./target/release/bip39-solver-gpu --config example_test_config.json --gpu-backend <opencl|cuda>
+
+# Specific GPU device selection
+./target/release/bip39-solver-gpu --config example_test_config.json --gpu-device 0 --gpu-device 1
+
+# Multi-GPU processing
+./target/release/bip39-solver-gpu --config example_test_config.json --multi-gpu
+
+# Comprehensive stress testing
+./target/release/bip39-solver-gpu --config example_test_config.json --stress-test
+
+# Distributed worker mode
+./target/release/bip39-solver-gpu --config example_test_config.json --mode worker
+```
+
+#### Enhanced Error Handling
+
+The application now provides detailed troubleshooting guidance:
+
+```
+⚠️  Failed to initialize GPU backend: CUDA runtime not available
+🔄 Falling back to CPU processing
+   This may be significantly slower than GPU processing.
+
+💡 GPU Troubleshooting Tips:
+   • For CUDA: Ensure NVIDIA drivers and CUDA toolkit are installed
+   • Try: nvidia-smi to check GPU status
+   • Try: nvcc --version to check CUDA installation
+   • Try --gpu-backend cuda or --gpu-backend opencl to switch backends
+   • Build with features: cargo build --features cuda,opencl
+```
 
 ## Building
 
-### Standard Build (OpenCL Only)
+### Prerequisites
 
+For optimal GPU performance, install the appropriate drivers and development tools:
+
+#### CUDA Support (NVIDIA GPUs)
+```bash
+# Install CUDA Toolkit (11.0 or later)
+# Ubuntu/Debian:
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb
+sudo dpkg -i cuda-keyring_1.0-1_all.deb
+sudo apt-get update
+sudo apt-get install cuda-toolkit
+
+# Verify installation
+nvcc --version
+nvidia-smi
+```
+
+#### OpenCL Support (AMD/Intel/NVIDIA GPUs)
+```bash
+# Ubuntu/Debian:
+sudo apt-get install opencl-headers ocl-icd-opencl-dev
+
+# Verify installation
+clinfo
+```
+
+### Build Options
+
+#### Standard Build (CPU only with GPU fallback)
 ```bash
 cargo build --release
 ```
 
-### With CUDA Support
-
+#### With OpenCL Support
 ```bash
-# Requires CUDA toolkit and nvcc
+cargo build --release --features opencl
+```
+
+#### With CUDA Support
+```bash
+# Requires CUDA toolkit and nvcc in PATH
 cargo build --release --features cuda
 ```
 
-### CUDA Requirements
+#### With Full GPU Support
+```bash
+cargo build --release --features cuda,opencl
+```
 
-To build with CUDA support:
-
-1. Install CUDA Toolkit (11.0 or later)
-2. Ensure `nvcc` is in your PATH
-3. Build with `--features cuda`
+### Build System Features
 
 The build system automatically:
-- Compiles CUDA kernels (`pbkdf2.cu`, `secp256k1.cu`, `keccak256.cu`)
-- Links CUDA runtime libraries
-- Falls back gracefully if CUDA is unavailable
+- ✅ **Fixed CUDA compilation**: Properly handles nvcc flags (removed duplicate -fPIC issue)
+- ✅ **Enhanced linking**: Automatically finds CUDA libraries and adds proper linking directives
+- ✅ **Graceful fallbacks**: Builds successfully even when GPU libraries are unavailable
+- ✅ **Feature-gated dependencies**: OpenCL and CUDA are optional features to avoid linking issues
+- ✅ **Smart detection**: Checks for CUDA/OpenCL availability at build time
+
+### Troubleshooting Build Issues
+
+If you encounter build issues:
+
+1. **CUDA compilation errors**: Ensure CUDA toolkit is properly installed and nvcc is in PATH
+2. **OpenCL linking errors**: Install OpenCL development headers for your platform
+3. **Missing GPU features**: Build without GPU features: `cargo build --release` (CPU fallback included)
+4. **Library not found**: The build system now handles missing libraries gracefully
 
 ```json
 {

@@ -1,0 +1,24 @@
+{
+  "word_constraints": [
+    { "position": 0, "words": ["frequent", "abandon", "ability"] },
+    { "position": 1, "words": ["lucky", "abandon", "ability"] },
+    { "position": 2, "words": ["inquiry", "abandon", "ability"] },
+    { "position": 3, "words": ["vendor", "abandon", "ability"] },
+    { "position": 4, "words": ["engine", "abandon", "ability"] },
+    { "position": 5, "words": ["dragon", "abandon", "ability"] },
+    { "position": 6, "words": ["horse", "abandon", "ability"] },
+    { "position": 7, "words": ["gorilla", "abandon", "ability"] },
+    { "position": 8, "words": ["pear", "abandon", "ability"] },
+    { "position": 9, "words": ["old", "abandon", "ability"] },
+    { "position": 10, "words": ["dance", "abandon", "ability"] },
+    { "position": 11, "words": ["shield", "abandon", "ability"] }
+  ],
+  "ethereum": {
+    "derivation_path": "m/44'/60'/0'/0/2",
+    "target_address": "0x543Bd35F52147370C0deCBd440863bc2a002C5c5"
+  },
+  "mnemonic_length": 12,
+  "wallet_type": "ethereum",
+  "batch_size": 100000,
+  "passphrase": ""
+}

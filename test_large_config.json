@@ -1,0 +1,24 @@
+{
+  "word_constraints": [
+    { "position": 0, "words": ["frequent"] },
+    { "position": 1, "words": ["lucky"] },
+    { "position": 2, "words": ["inquiry", "increase", "indoor"] },
+    { "position": 3, "words": ["vendor", "village", "virus"] },
+    { "position": 4, "words": ["engine"] },
+    { "position": 5, "words": ["dragon"] },
+    { "position": 6, "words": ["horse"] },
+    { "position": 7, "words": ["gorilla"] },
+    { "position": 8, "words": ["pear"] },
+    { "position": 9, "words": ["old"] },
+    { "position": 10, "words": ["dance"] },
+    { "position": 11, "words": ["shield"] }
+  ],
+  "ethereum": {
+    "derivation_path": "m/44'/60'/0'/0/2",
+    "target_address": "0x543Bd35F52147370C0deCBd440863bc2a002C5c5"
+  },
+  "mnemonic_length": 12,
+  "wallet_type": "ethereum",
+  "batch_size": 1000,
+  "passphrase": ""
+}

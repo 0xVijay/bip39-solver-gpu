@@ -45,6 +45,16 @@ pub struct GpuConfig {
     pub multi_gpu: bool,
 }
 
+impl Default for GpuConfig {
+    fn default() -> Self {
+        GpuConfig {
+            backend: "auto".to_string(), // Auto-detect best backend
+            devices: vec![], // Use all available devices
+            multi_gpu: true, // Enable multi-GPU by default
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     /// Word constraints for generating candidate mnemonics

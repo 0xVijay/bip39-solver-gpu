@@ -24,6 +24,26 @@ mod tests {
     }
 
     #[test]
+    fn test_known_test_mnemonic_address() {
+        // Test with the specific known test mnemonic
+        let mnemonic = "frequent lucky inquiry vendor engine dragon horse gorilla pear old dance shield";
+        let passphrase = "";
+        let derivation_path = "m/44'/60'/0'/0/2";
+
+        let result = derive_ethereum_address(mnemonic, passphrase, derivation_path);
+        assert!(result.is_ok());
+
+        let address = result.unwrap();
+        assert!(address.starts_with("0x"));
+        assert_eq!(address.len(), 42);
+
+        println!("Test mnemonic: {}", mnemonic);
+        println!("Derivation path: {}", derivation_path);
+        println!("Generated address: {}", address);
+        println!("Current config target: 0x543Bd35F52147370C0deCBd440863bc2a002C5c5");
+    }
+
+    #[test]
     fn test_config_serialization() {
         let config = Config {
             word_constraints: vec![WordConstraint {
