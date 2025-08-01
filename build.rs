@@ -57,10 +57,14 @@ fn build_cuda_kernels() {
         "-o", &obj_path
     ];
     
-    // Add all kernel files
-    for kernel in &kernel_files {
-        let kernel_path = cuda_dir.join(kernel);
-        nvcc_args.push(kernel_path.to_str().unwrap());
+    // Add all kernel files - collect paths as owned strings first
+    let kernel_paths: Vec<String> = kernel_files
+        .iter()
+        .map(|kernel| cuda_dir.join(kernel).to_string_lossy().to_string())
+        .collect();
+    
+    for path in &kernel_paths {
+        nvcc_args.push(path);
     }
     
     let result = Command::new("nvcc").args(&nvcc_args).output();
