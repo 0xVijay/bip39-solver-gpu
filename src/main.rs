@@ -248,9 +248,7 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
     loop {
         let batch_end = std::cmp::min(current_offset + batch_size, word_space.total_combinations);
 
-        // Use carriage return to overwrite previous line for compact output
-        print!("\rSearching: {} to {} ", current_offset, batch_end);
-        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+        // Clean progress reporting - don't print individual batch ranges
 
         let result = if let Some(ref manager) = gpu_manager {
             // GPU processing

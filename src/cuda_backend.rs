@@ -185,17 +185,12 @@ impl CudaBackend {
                 .as_ref()
                 .ok_or("Word space not initialized")?;
 
-            println!(
-                "CUDA batch execution: device={}, offset={}, batch_size={}, target={}",
-                _device_id, _start_offset, _batch_size, _target_address
-            );
+            // Clean batch execution - no verbose logging
 
-            // Use CPU-based derivation (same as OpenCL backend) until CUDA kernels are properly implemented
-            print!("Executing kernels: PBKDF2 → BIP32 → secp256k1 → Keccak-256... ");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
+            // Silent processing - no verbose kernel execution messages
 
             let mut processed_count = 0u128;
-            let mut checksum_errors = 0u128;
+            let mut _checksum_errors = 0u128;
 
             for offset in _start_offset..(_start_offset + _batch_size) {
                 if offset >= word_space.total_combinations {
@@ -207,8 +202,7 @@ impl CudaBackend {
                         match derive_ethereum_address(&mnemonic, _passphrase, _derivation_path) {
                             Ok(address) => {
                                 if addresses_equal(&address, _target_address) {
-                                    println!("completed successfully.");
-                                    println!("🎉 CUDA backend found a match!");
+                                    // Found match - no need for completion message
                                     return Ok(GpuBatchResult {
                                         mnemonic: Some(mnemonic),
                                         address: Some(address),
@@ -219,7 +213,7 @@ impl CudaBackend {
                             }
                             Err(_) => {
                                 // Count checksum errors but don't log each one (too verbose)
-                                checksum_errors += 1;
+                                _checksum_errors += 1;
                             }
                         }
                     }
@@ -227,13 +221,8 @@ impl CudaBackend {
                 processed_count += 1;
             }
 
-            // Only log summary of checksum errors if there were many
-            if checksum_errors > 0 && checksum_errors > _batch_size / 10 {
-                println!("Note: {}/{} mnemonics had invalid checksums (expected with partial word lists)", 
-                         checksum_errors, processed_count);
-            }
-
-            println!("completed successfully.");
+            // Silent checksum error tracking - no verbose output
+            // (Checksum errors are expected and normal with partial word lists)
 
             Ok(GpuBatchResult {
                 mnemonic: None,
