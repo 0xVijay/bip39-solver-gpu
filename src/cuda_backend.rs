@@ -195,6 +195,7 @@ impl CudaBackend {
             std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
             let mut processed_count = 0u128;
+            let mut checksum_errors = 0u128;
 
             for offset in _start_offset..(_start_offset + _batch_size) {
                 if offset >= word_space.total_combinations {
@@ -216,13 +217,20 @@ impl CudaBackend {
                                     });
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Error deriving address for mnemonic: {}", e);
+                            Err(_) => {
+                                // Count checksum errors but don't log each one (too verbose)
+                                checksum_errors += 1;
                             }
                         }
                     }
                 }
                 processed_count += 1;
+            }
+
+            // Only log summary of checksum errors if there were many
+            if checksum_errors > 0 && checksum_errors > _batch_size / 10 {
+                println!("Note: {}/{} mnemonics had invalid checksums (expected with partial word lists)", 
+                         checksum_errors, processed_count);
             }
 
             println!("completed successfully.");

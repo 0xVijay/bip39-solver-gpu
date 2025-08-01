@@ -285,17 +285,35 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
 
         current_offset = batch_end;
 
-        // Report progress with compact format
+        // Report progress with compact format including ETA
         let elapsed = start_time.elapsed();
         let rate = current_offset as f64 / elapsed.as_secs_f64();
+        let remaining = word_space.total_combinations - current_offset;
+        let eta_seconds = if rate > 0.0 {
+            remaining as f64 / rate
+        } else {
+            0.0
+        };
+
+        // Format ETA nicely
+        let eta_str = if eta_seconds < 60.0 {
+            format!("{:.0}s", eta_seconds)
+        } else if eta_seconds < 3600.0 {
+            format!("{:.0}m {:.0}s", eta_seconds / 60.0, eta_seconds % 60.0)
+        } else if eta_seconds < 86400.0 {
+            format!("{:.0}h {:.0}m", eta_seconds / 3600.0, (eta_seconds % 3600.0) / 60.0)
+        } else {
+            format!("{:.0}d {:.0}h", eta_seconds / 86400.0, (eta_seconds % 86400.0) / 3600.0)
+        };
 
         print!(
-            "\rProgress: {}/{} ({:.2}%) | Rate: {:.2} mnemonics/sec | Elapsed: {:.1}s",
+            "\rProgress: {}/{} ({:.2}%) | Rate: {:.2} mnemonics/sec | Elapsed: {:.1}s | ETA: {}",
             current_offset,
             word_space.total_combinations,
             (current_offset as f64 / word_space.total_combinations as f64) * 100.0,
             rate,
-            elapsed.as_secs_f64()
+            elapsed.as_secs_f64(),
+            eta_str
         );
         std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
 
@@ -380,8 +398,8 @@ fn search_with_cpu(
                                     });
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Error deriving address for mnemonic: {}", e);
+                            Err(_) => {
+                                // Don't log individual checksum errors (too verbose)
                             }
                         }
                     }

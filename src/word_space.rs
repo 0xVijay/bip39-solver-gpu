@@ -1,16 +1,10 @@
 use crate::config::Config;
+use bip39::Language;
 
-/// BIP39 word list (extended for testing with known mnemonic words)
-const BIP39_WORDS: &[&str] = &[
-    "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", "absurd",
-    "abuse", "access", "accident", "account", "accuse", "achieve", "acid", "acoustic", "acquire",
-    "across", "act", "action", "actor", "actress", "actual", "adapt", "add", "addict", "address",
-    "adjust", "admit", "adult", "advance", "advice", "aerobic", "affair", "afford", "afraid",
-    "again", "age", "agent",
-    // Adding words from known test mnemonic
-    "dance", "dragon", "engine", "frequent", "gorilla", "horse", "inquiry", "lucky", "old", "pear", "shield", "vendor",
-    // ... (in real implementation, include all 2048 BIP39 words)
-];
+/// Get the complete BIP39 word list (all 2048 words)
+fn get_bip39_words() -> &'static [&'static str] {
+    Language::English.word_list()
+}
 
 #[derive(Debug, Clone)]
 pub struct WordSpace {
@@ -24,10 +18,11 @@ impl WordSpace {
     /// Generate word space based on configuration constraints
     pub fn from_config(config: &Config) -> WordSpace {
         let mut positions: Vec<Vec<u16>> = vec![Vec::new(); 12];
+        let bip39_words = get_bip39_words();
 
         // Initialize all positions with all possible words
         for pos in 0..12 {
-            for (word_idx, _word) in BIP39_WORDS.iter().enumerate() {
+            for (word_idx, _word) in bip39_words.iter().enumerate() {
                 positions[pos].push(word_idx as u16);
             }
         }
@@ -43,13 +38,13 @@ impl WordSpace {
             if !constraint.words.is_empty() {
                 // If specific words are provided, use only those
                 for word in &constraint.words {
-                    if let Some(idx) = BIP39_WORDS.iter().position(|&w| w == word) {
+                    if let Some(idx) = bip39_words.iter().position(|&w| w == word) {
                         valid_indices.push(idx as u16);
                     }
                 }
             } else if let Some(prefix) = &constraint.prefix {
                 // If prefix is provided, find all words that start with it
-                for (word_idx, word) in BIP39_WORDS.iter().enumerate() {
+                for (word_idx, word) in bip39_words.iter().enumerate() {
                     if word.starts_with(prefix) {
                         valid_indices.push(word_idx as u16);
                     }
@@ -96,12 +91,13 @@ impl WordSpace {
     /// Convert word indices to actual words
     pub fn words_to_mnemonic(word_indices: &[u16; 12]) -> Option<String> {
         let mut words = Vec::new();
+        let bip39_words = get_bip39_words();
 
         for &word_idx in word_indices {
-            if (word_idx as usize) >= BIP39_WORDS.len() {
+            if (word_idx as usize) >= bip39_words.len() {
                 return None;
             }
-            words.push(BIP39_WORDS[word_idx as usize]);
+            words.push(bip39_words[word_idx as usize]);
         }
 
         Some(words.join(" "))
@@ -109,12 +105,12 @@ impl WordSpace {
 
     /// Get the word at a specific index in the BIP39 word list
     pub fn get_word(index: u16) -> Option<&'static str> {
-        BIP39_WORDS.get(index as usize).copied()
+        get_bip39_words().get(index as usize).copied()
     }
 
     /// Get all BIP39 words
     pub fn get_all_words() -> &'static [&'static str] {
-        BIP39_WORDS
+        get_bip39_words()
     }
 }
 
@@ -159,7 +155,7 @@ mod tests {
 
         // Other positions should have all words
         for pos in 2..12 {
-            assert_eq!(word_space.positions[pos].len(), BIP39_WORDS.len());
+            assert_eq!(word_space.positions[pos].len(), get_bip39_words().len());
         }
     }
 

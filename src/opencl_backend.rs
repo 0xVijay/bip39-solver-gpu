@@ -211,6 +211,7 @@ impl GpuBackend for OpenClBackend {
 
         // Use CPU processing (simplified for now)
         let mut processed_count = 0u128;
+        let mut checksum_errors = 0u128;
 
         for offset in start_offset..(start_offset + batch_size) {
             if offset >= word_space.total_combinations {
@@ -230,13 +231,20 @@ impl GpuBackend for OpenClBackend {
                                 });
                             }
                         }
-                        Err(e) => {
-                            eprintln!("Error deriving address for mnemonic: {}", e);
+                        Err(_) => {
+                            // Count checksum errors but don't log each one (too verbose)
+                            checksum_errors += 1;
                         }
                     }
                 }
             }
             processed_count += 1;
+        }
+
+        // Only log summary of checksum errors if there were many
+        if checksum_errors > 0 && checksum_errors > batch_size / 10 {
+            println!("Note: {}/{} mnemonics had invalid checksums (expected with partial word lists)", 
+                     checksum_errors, processed_count);
         }
 
         Ok(GpuBatchResult {
