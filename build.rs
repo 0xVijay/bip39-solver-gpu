@@ -5,12 +5,12 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=cuda/");
 
-    // Only build CUDA kernels if CUDA is available and requested
-    if std::env::var("CARGO_FEATURE_CUDA").is_ok() || check_cuda_available() {
+    // Only build CUDA kernels if CUDA feature is explicitly enabled
+    if std::env::var("CARGO_FEATURE_CUDA").is_ok() {
         build_cuda_kernels();
     } else {
         println!(
-            "cargo:warning=CUDA not available or not requested, skipping CUDA kernel compilation"
+            "cargo:warning=CUDA feature not enabled, skipping CUDA kernel compilation"
         );
     }
 }
@@ -102,8 +102,10 @@ fn build_cuda_kernels() {
         // Link CUDA static runtime directly using full path since cargo:rustc-link-lib isn't working
         println!("cargo:rustc-link-arg=/usr/local/cuda/lib64/libcudart_static.a");
         
-        // Ensure libc is linked for atexit function
-        println!("cargo:rustc-link-lib=dylib=c");
+        // Force link with standard libs to provide atexit
+        println!("cargo:rustc-link-arg=-Wl,--as-needed");
+        println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
+        println!("cargo:rustc-link-arg=-lc");
         
     } else {
         println!("cargo:warning=No CUDA object files were created");
