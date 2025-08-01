@@ -5,11 +5,9 @@ use std::error::Error;
 use std::sync::Arc;
 
 /// OpenCL backend implementation for GPU computation
-/// With automatic fallback to CPU processing if OpenCL is not available
 pub struct OpenClBackend {
     initialized: bool,
     word_space: Option<Arc<WordSpace>>,
-    use_cpu_fallback: bool,
 }
 
 impl OpenClBackend {
@@ -18,7 +16,6 @@ impl OpenClBackend {
         OpenClBackend {
             initialized: false,
             word_space: None,
-            use_cpu_fallback: false,
         }
     }
 
@@ -123,18 +120,9 @@ impl GpuBackend for OpenClBackend {
 
         println!("Initializing OpenCL backend...");
 
-        // Try to initialize OpenCL
-        match self.try_initialize_opencl() {
-            Ok(()) => {
-                println!("OpenCL backend initialized successfully");
-                self.use_cpu_fallback = false;
-            }
-            Err(e) => {
-                println!("Warning: OpenCL initialization failed: {}", e);
-                println!("Falling back to CPU processing");
-                self.use_cpu_fallback = true;
-            }
-        }
+        // Try to initialize OpenCL - fail if not available (no CPU fallback)
+        self.try_initialize_opencl()?;
+        println!("OpenCL backend initialized successfully");
 
         self.initialized = true;
         Ok(())
@@ -151,48 +139,12 @@ impl GpuBackend for OpenClBackend {
     }
 
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
-        if self.use_cpu_fallback {
-            // Return CPU fallback device when OpenCL is not available
-            return Ok(vec![GpuDevice {
-                id: 0,
-                name: "CPU Fallback (OpenCL)".to_string(),
-                memory: 8 * 1024 * 1024 * 1024, // 8GB default
-                compute_units: std::thread::available_parallelism()
-                    .map(|p| p.get() as u32)
-                    .unwrap_or(4),
-            }]);
+        // Only enumerate actual OpenCL GPU devices (no CPU fallback)
+        let devices = self.enumerate_opencl_devices()?;
+        if devices.is_empty() {
+            return Err("No OpenCL GPU devices found".into());
         }
-
-        // Try to enumerate actual OpenCL GPU devices
-        match self.enumerate_opencl_devices() {
-            Ok(devices) => {
-                if devices.is_empty() {
-                    println!("Warning: No OpenCL devices found, using CPU fallback");
-                    Ok(vec![GpuDevice {
-                        id: 0,
-                        name: "CPU Fallback (OpenCL)".to_string(),
-                        memory: 8 * 1024 * 1024 * 1024,
-                        compute_units: std::thread::available_parallelism()
-                            .map(|p| p.get() as u32)
-                            .unwrap_or(4),
-                    }])
-                } else {
-                    Ok(devices)
-                }
-            }
-            Err(e) => {
-                println!("Warning: Failed to enumerate OpenCL devices: {}", e);
-                println!("Using CPU fallback");
-                Ok(vec![GpuDevice {
-                    id: 0,
-                    name: "CPU Fallback (OpenCL)".to_string(),
-                    memory: 8 * 1024 * 1024 * 1024,
-                    compute_units: std::thread::available_parallelism()
-                        .map(|p| p.get() as u32)
-                        .unwrap_or(4),
-                }])
-            }
-        }
+        Ok(devices)
     }
 
     fn execute_batch(
@@ -209,7 +161,8 @@ impl GpuBackend for OpenClBackend {
             .as_ref()
             .ok_or("Word space not initialized")?;
 
-        // Optimized CPU processing with minimal overhead
+        // TODO: Replace with actual OpenCL GPU kernel processing
+        // Currently using CPU implementation until GPU kernels are implemented
         let mut processed_count = 0u128;
         let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
 
@@ -246,8 +199,8 @@ impl GpuBackend for OpenClBackend {
     }
 
     fn is_available(&self) -> bool {
-        // Try to check OpenCL availability
-        self.check_opencl_availability().unwrap_or(true) // Always return true since we have CPU fallback
+        // Check if OpenCL is actually available (no CPU fallback)
+        self.check_opencl_availability().unwrap_or(false)
     }
 }
 

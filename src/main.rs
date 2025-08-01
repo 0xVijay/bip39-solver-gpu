@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use std::env;
 use std::time::Instant;
 
@@ -20,7 +19,6 @@ pub mod word_space;
 pub mod worker_client;
 
 use config::{Config, GpuConfig};
-use eth::{addresses_equal, derive_ethereum_address};
 use gpu_manager::GpuManager;
 use slack::SlackNotifier;
 use stress_testing::StressTester;
@@ -38,115 +36,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() < 3 || args[1] != "--config" {
         eprintln!("Usage: {} --config <config.json> [options]", args[0]);
         eprintln!("\nOptions:");
-        eprintln!("  --mode <standalone|worker>     Set processing mode (default: standalone)");
-        eprintln!("  --gpu-backend <opencl|cuda>    Set GPU backend (overrides config)");
-        eprintln!("  --gpu-device <device_id>       Use specific GPU device (can be repeated)");
-        eprintln!("  --multi-gpu                     Enable multi-GPU processing");
-        eprintln!("  --stress-test                   Run comprehensive stress tests");
-        eprintln!("\nRecommended config file: example_test_config.json");
-        eprintln!("Example usage: {} --config example_test_config.json", args[0]);
-        eprintln!("\nExample config:");
-        let default_config = Config::default();
-        println!("{}", serde_json::to_string_pretty(&default_config)?);
+        eprintln!("  --worker                    Run as distributed worker");
+        eprintln!("  --stress-test               Run comprehensive stress tests");
+        eprintln!("\nExample usage: {} --config example_test_config.json", args[0]);
         std::process::exit(1);
     }
 
     let config_path = &args[2];
     
-    // Validate config file path and recommend example_test_config.json
+    // Validate config file path
     if !std::path::Path::new(config_path).exists() {
         eprintln!("Error: Config file '{}' not found", config_path);
-        eprintln!("Tip: Use 'example_test_config.json' for testing");
         std::process::exit(1);
     }
     
-    if !config_path.ends_with("example_test_config.json") {
-        println!("Warning: Using config file '{}'. For testing, consider using 'example_test_config.json'", config_path);
-    }
-    
-    let mut config = Config::load(config_path)?;
+    let config = Config::load(config_path)?;
 
-    // Parse command line arguments to override config
-    let mut i = 3;
-    let mut mode = "standalone".to_string();
-    let mut gpu_backend: Option<String> = None;
-    let mut gpu_devices: Vec<u32> = Vec::new();
-    let mut multi_gpu: Option<bool> = None;
+    // Parse simple command line arguments
+    let mut run_as_worker = false;
     let mut run_stress_test = false;
 
-    while i < args.len() {
-        match args[i].as_str() {
-            "--mode" => {
-                if i + 1 < args.len() {
-                    mode = args[i + 1].clone();
-                    i += 2;
-                } else {
-                    eprintln!("Error: --mode requires a value");
-                    std::process::exit(1);
-                }
-            }
-            "--gpu-backend" => {
-                if i + 1 < args.len() {
-                    gpu_backend = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --gpu-backend requires a value");
-                    std::process::exit(1);
-                }
-            }
-            "--gpu-device" => {
-                if i + 1 < args.len() {
-                    match args[i + 1].parse::<u32>() {
-                        Ok(device_id) => {
-                            gpu_devices.push(device_id);
-                            i += 2;
-                        }
-                        Err(_) => {
-                            eprintln!("Error: --gpu-device requires a numeric device ID");
-                            std::process::exit(1);
-                        }
-                    }
-                } else {
-                    eprintln!("Error: --gpu-device requires a value");
-                    std::process::exit(1);
-                }
-            }
-            "--multi-gpu" => {
-                multi_gpu = Some(true);
-                i += 1;
-            }
-            "--stress-test" => {
-                run_stress_test = true;
-                i += 1;
-            }
+    for arg in args.iter().skip(3) {
+        match arg.as_str() {
+            "--worker" => run_as_worker = true,
+            "--stress-test" => run_stress_test = true,
             _ => {
-                eprintln!("Unknown argument: {}", args[i]);
+                eprintln!("Unknown argument: {}", arg);
                 std::process::exit(1);
             }
         }
-    }
-
-    // Override GPU config from command line arguments
-    if gpu_backend.is_some() || !gpu_devices.is_empty() || multi_gpu.is_some() {
-        let mut gpu_config = config.gpu.unwrap_or_else(|| GpuConfig {
-            backend: "opencl".to_string(),
-            devices: vec![],
-            multi_gpu: false,
-        });
-
-        if let Some(backend) = gpu_backend {
-            gpu_config.backend = backend;
-        }
-
-        if !gpu_devices.is_empty() {
-            gpu_config.devices = gpu_devices;
-        }
-
-        if let Some(multi) = multi_gpu {
-            gpu_config.multi_gpu = multi;
-        }
-
-        config.gpu = Some(gpu_config);
     }
 
     // Handle stress testing mode
@@ -154,19 +72,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return run_stress_tests(&config);
     }
 
-    match mode.as_str() {
-        "worker" => {
-            // Run as distributed worker
-            worker_client::run_worker(&config, None)?;
-        }
-        "standalone" => {
-            // Run standalone version with GPU support
-            run_standalone(&config, config_path)?;
-        }
-        _ => {
-            eprintln!("Invalid mode: {}. Use 'standalone' or 'worker'", mode);
-            std::process::exit(1);
-        }
+    if run_as_worker {
+        // Run as distributed worker
+        worker_client::run_worker(&config, None)?;
+    } else {
+        // Run standalone version with automatic GPU detection
+        run_standalone(&config, config_path)?;
     }
 
     Ok(())
@@ -177,48 +88,23 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
     println!("Target address: {}", config.ethereum.target_address);
     println!("Derivation path: {}", config.ethereum.derivation_path);
 
-    // Initialize GPU manager with enhanced error handling
-    let mut gpu_manager = match GpuManager::from_config(config) {
-        Ok(manager) => {
-            println!("✅ GPU backend initialized: {}", manager.backend_name());
-            if manager.is_multi_gpu_enabled() {
-                println!(
-                    "🔥 Multi-GPU processing enabled with {} device(s)",
-                    manager.devices().len()
-                );
-                for device in manager.devices() {
-                    println!("   • Device {}: {} ({} MB memory, {} compute units)", 
-                        device.id, device.name, device.memory / 1024 / 1024, device.compute_units);
-                }
-            } else {
-                println!("🖥️  Single GPU processing with {} device(s)", manager.devices().len());
-                for device in manager.devices() {
-                    println!("   • Device {}: {} ({} MB memory, {} compute units)", 
-                        device.id, device.name, device.memory / 1024 / 1024, device.compute_units);
-                }
-            }
-            Some(manager)
-        }
-        Err(e) => {
-            println!("⚠️  Failed to initialize GPU backend: {}", e);
-            println!("🔄 Falling back to CPU processing");
-            println!("   This may be significantly slower than GPU processing.");
-            
-            // Provide helpful troubleshooting tips
-            println!("\n💡 GPU Troubleshooting Tips:");
-            if config.gpu.as_ref().map(|g| &g.backend) == Some(&"cuda".to_string()) {
-                println!("   • For CUDA: Ensure NVIDIA drivers and CUDA toolkit are installed");
-                println!("   • Try: nvidia-smi to check GPU status");
-                println!("   • Try: nvcc --version to check CUDA installation");
-            } else {
-                println!("   • For OpenCL: Install OpenCL drivers for your GPU");
-                println!("   • Try: clinfo to check OpenCL installation");
-            }
-            println!("   • Try --gpu-backend cuda or --gpu-backend opencl to switch backends");
-            println!("   • Build with features: cargo build --features cuda,opencl\n");
-            None
-        }
-    };
+    // Auto-detect and initialize the best available GPU backend
+    let mut gpu_manager = auto_detect_best_gpu_backend(config)?;
+    
+    println!("✅ GPU backend initialized: {}", gpu_manager.backend_name());
+    if gpu_manager.is_multi_gpu_enabled() {
+        println!(
+            "🔥 Multi-GPU processing enabled with {} device(s)",
+            gpu_manager.devices().len()
+        );
+    } else {
+        println!("🖥️  Single GPU processing with {} device(s)", gpu_manager.devices().len());
+    }
+    
+    for device in gpu_manager.devices() {
+        println!("   • Device {}: {} ({} MB memory, {} compute units)", 
+            device.id, device.name, device.memory / 1024 / 1024, device.compute_units);
+    }
 
     // Initialize Slack notifier if configured
     let slack_notifier = config
@@ -243,41 +129,29 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
 
     let start_time = Instant::now();
     
-    // Use dynamic batch sizing based on GPU memory
-    let optimal_batch_sizes = if let Some(ref manager) = gpu_manager {
-        manager.get_optimal_batch_sizes()
-    } else {
-        vec![]
-    };
+    // Use dynamic batch sizing based on GPU memory (ignore config batch_size)
+    let optimal_batch_sizes = gpu_manager.get_optimal_batch_sizes();
     
-    // Use the largest optimal batch size or fallback to config
+    // Use the largest optimal batch size for maximum performance
     let dynamic_batch_size = optimal_batch_sizes.iter()
         .map(|(_, size)| *size)
         .max()
-        .unwrap_or(config.batch_size as u128);
+        .unwrap_or(100000); // Fallback only if no GPU devices
     
     println!("📊 Using dynamic batch sizing:");
-    if let Some(ref manager) = gpu_manager {
-        for (device_id, batch_size) in &optimal_batch_sizes {
-            if let Some(memory_info) = manager.get_device_memory_info(*device_id, *batch_size) {
-                println!("   • Device {}: {} batch size - {}", device_id, batch_size, memory_info);
-            }
+    for (device_id, batch_size) in &optimal_batch_sizes {
+        if let Some(memory_info) = gpu_manager.get_device_memory_info(*device_id, *batch_size) {
+            println!("   • Device {}: {} batch size - {}", device_id, batch_size, memory_info);
         }
     }
     
     let mut current_offset = 0u128;
 
-    // Main search loop
+    // Main search loop - GPU only, no CPU fallback
     loop {
         let batch_end = std::cmp::min(current_offset + dynamic_batch_size, word_space.total_combinations);
 
-        let result = if let Some(ref manager) = gpu_manager {
-            // GPU processing with optimal batch size
-            search_with_gpu(manager, current_offset, batch_end - current_offset, config)?
-        } else {
-            // CPU fallback processing
-            search_with_cpu(&word_space, current_offset, batch_end, config)?
-        };
+        let result = search_with_gpu(&gpu_manager, current_offset, batch_end - current_offset, config)?;
 
         if let Some(work_result) = result {
             println!("\n🎉 Found matching mnemonic!");
@@ -294,11 +168,7 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
                 )?;
             }
 
-            // Shutdown GPU manager
-            if let Some(ref mut manager) = gpu_manager {
-                manager.shutdown()?;
-            }
-
+            gpu_manager.shutdown()?;
             return Ok(());
         }
 
@@ -350,14 +220,45 @@ fn run_standalone(config: &Config, config_path: &str) -> Result<(), Box<dyn std:
         }
     }
 
-    // Shutdown GPU manager
-    if let Some(ref mut gpu_manager) = gpu_manager {
-        gpu_manager.shutdown()?;
-    }
-
+    gpu_manager.shutdown()?;
     Ok(())
 }
 
+/// Auto-detect and initialize the best available GPU backend
+fn auto_detect_best_gpu_backend(config: &Config) -> Result<GpuManager, Box<dyn std::error::Error>> {
+    // Try backends in order of preference: CUDA first (faster), then OpenCL
+    let backends_to_try = vec!["cuda", "opencl"];
+    
+    for backend_name in backends_to_try {
+        println!("🔍 Trying {} backend...", backend_name.to_uppercase());
+        
+        // Create a temporary config with this backend
+        let mut test_config = config.clone();
+        test_config.gpu = Some(GpuConfig {
+            backend: backend_name.to_string(),
+            devices: vec![], // Auto-detect all devices
+            multi_gpu: true, // Always enable multi-GPU for maximum performance
+        });
+        
+        match GpuManager::from_config(&test_config) {
+            Ok(manager) => {
+                let device_count = manager.devices().len();
+                if device_count > 0 {
+                    println!("✅ {} backend initialized successfully with {} device(s)", 
+                             backend_name.to_uppercase(), device_count);
+                    return Ok(manager);
+                }
+            }
+            Err(e) => {
+                println!("❌ {} backend failed: {}", backend_name.to_uppercase(), e);
+                continue;
+            }
+        }
+    }
+    
+    // If no GPU backend works, exit with error (no CPU fallback)
+    Err("No GPU backend available. Ensure CUDA or OpenCL drivers are installed.".into())
+}
 /// Search using GPU backends
 fn search_with_gpu(
     gpu_manager: &GpuManager,
@@ -387,46 +288,6 @@ fn search_with_gpu(
     }
 
     Ok(None)
-}
-
-/// Search using CPU fallback (original implementation)
-fn search_with_cpu(
-    word_space: &WordSpace,
-    start_offset: u128,
-    end_offset: u128,
-    config: &Config,
-) -> Result<Option<WorkResult>, Box<dyn std::error::Error>> {
-    // Process batch in parallel using rayon
-    let result: Option<WorkResult> =
-        (start_offset..end_offset)
-            .into_par_iter()
-            .find_map_any(|index| {
-                if let Some(word_indices) = word_space.index_to_words(index) {
-                    if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                        match derive_ethereum_address(
-                            &mnemonic,
-                            &config.passphrase,
-                            &config.ethereum.derivation_path,
-                        ) {
-                            Ok(address) => {
-                                if addresses_equal(&address, &config.ethereum.target_address) {
-                                    return Some(WorkResult {
-                                        mnemonic,
-                                        address,
-                                        offset: index,
-                                    });
-                                }
-                            }
-                            Err(_) => {
-                                // Don't log individual checksum errors (too verbose)
-                            }
-                        }
-                    }
-                }
-                None
-            });
-
-    Ok(result)
 }
 
 /// Run comprehensive stress tests
