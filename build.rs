@@ -99,6 +99,9 @@ fn build_cuda_kernels() {
             println!("cargo:rustc-link-arg={}", obj);
         }
         
+        // Link CUDA static runtime directly using full path since cargo:rustc-link-lib isn't working
+        println!("cargo:rustc-link-arg=/usr/local/cuda/lib64/libcudart_static.a");
+        
     } else {
         println!("cargo:warning=No CUDA object files were created");
     }
