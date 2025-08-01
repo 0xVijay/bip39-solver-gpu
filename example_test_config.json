@@ -15,7 +15,7 @@
   ],
   "ethereum": {
     "derivation_path": "m/44'/60'/0'/0/2",
-    "target_address": "0xc5d6d33faf930aa69aa4db6ef719aedd5af27019"
+    "target_address": "0x543Bd35F52147370C0deCBd440863bc2a002C5c5"
   },
   "mnemonic_length": 12,
   "wallet_type": "ethereum",
