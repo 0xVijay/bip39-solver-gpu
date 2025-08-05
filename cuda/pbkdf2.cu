@@ -133,54 +133,8 @@ __device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest)
 /**
  * GPU-optimized HMAC-SHA512 implementation
  */
-__device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
-                                            const uint8_t* message, size_t msg_len, 
-                                            uint8_t* digest) {
-    uint8_t ipad[SHA512_BLOCK_SIZE];
-    uint8_t opad[SHA512_BLOCK_SIZE];
-    uint8_t inner_digest[SHA512_DIGEST_SIZE];
-    
-    // Prepare key
-    uint8_t key_buf[SHA512_BLOCK_SIZE];
-    if (key_len > SHA512_BLOCK_SIZE) {
-        cuda_sha512(key, key_len, key_buf);
-        key_len = SHA512_DIGEST_SIZE;
-    } else {
-        for (size_t i = 0; i < key_len; i++) {
-            key_buf[i] = key[i];
-        }
-    }
-    
-    // Pad key to block size
-    for (size_t i = key_len; i < SHA512_BLOCK_SIZE; i++) {
-        key_buf[i] = 0;
-    }
-    
-    // Create ipad and opad
-    for (int i = 0; i < SHA512_BLOCK_SIZE; i++) {
-        ipad[i] = key_buf[i] ^ 0x36;
-        opad[i] = key_buf[i] ^ 0x5c;
-    }
-    
-    // Inner hash
-    uint8_t inner_msg[SHA512_BLOCK_SIZE + 256]; // Assume message fits
-    for (int i = 0; i < SHA512_BLOCK_SIZE; i++) {
-        inner_msg[i] = ipad[i];
-    }
-    for (size_t i = 0; i < msg_len && i < 256; i++) {
-        inner_msg[SHA512_BLOCK_SIZE + i] = message[i];
-    }
-    cuda_sha512(inner_msg, SHA512_BLOCK_SIZE + msg_len, inner_digest);
-    
-    // Outer hash
-    uint8_t outer_msg[SHA512_BLOCK_SIZE + SHA512_DIGEST_SIZE];
-    for (int i = 0; i < SHA512_BLOCK_SIZE; i++) {
-        outer_msg[i] = opad[i];
-    }
-    for (int i = 0; i < SHA512_DIGEST_SIZE; i++) {
-        outer_msg[SHA512_BLOCK_SIZE + i] = inner_digest[i];
-    }
-    cuda_sha512(outer_msg, SHA512_BLOCK_SIZE + SHA512_DIGEST_SIZE, digest);
+// ...existing code...
+#include "hmac_sha512.cuh"
 }
 
 /**

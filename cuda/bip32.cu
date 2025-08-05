@@ -13,10 +13,8 @@
 #define BIP32_CHAIN_CODE_SIZE 32
 #define HMAC_SHA512_DIGEST_SIZE 64
 
-// Forward declaration from pbkdf2.cu
-__device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
-                                            const uint8_t* message, size_t msg_len, 
-                                            uint8_t* digest);
+// ...existing code...
+#include "hmac_sha512.cuh"
 
 /**
  * GPU-optimized BIP32 key derivation
