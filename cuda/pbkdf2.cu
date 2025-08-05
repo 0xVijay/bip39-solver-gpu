@@ -135,7 +135,6 @@ __device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest)
  */
 // ...existing code...
 #include "hmac_sha512.cuh"
-}
 
 /**
  * High-performance CUDA kernel for batch PBKDF2-HMAC-SHA512 computation

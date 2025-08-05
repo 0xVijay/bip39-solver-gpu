@@ -10,20 +10,19 @@
 #include <algorithm>
 
 // Include kernels from other modules
-extern "C" {
-    // ...existing code...
 #include "hmac_sha512.cuh"
-    
+
+extern "C" {
     // From bip32.cu  
     __device__ void cuda_derive_ethereum_private_key(
         const uint8_t* seed,
         uint32_t address_index,
         uint8_t* private_key
     );
-    
+
     // From secp256k1.cu
     __device__ void scalar_mult(const uint32_t* scalar, ec_point* result);
-    
+
     // From keccak256.cu
     __device__ void public_key_to_ethereum_address(const uint8_t* public_key, uint8_t* address);
 }
