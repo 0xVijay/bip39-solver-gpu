@@ -24,8 +24,18 @@ fn main() {
             "cuda/gpu_pipeline.cu",
         ];
         
+        // CUDA header files that may change
+        let cuda_headers = [
+            "cuda/hmac_sha512.cuh",
+            "cuda/sha512.cuh",
+        ];
+        
         for source in &cuda_sources {
             println!("cargo:rerun-if-changed={}", source);
+        }
+        
+        for header in &cuda_headers {
+            println!("cargo:rerun-if-changed={}", header);
         }
         
         // Check if CUDA toolkit is available before attempting compilation

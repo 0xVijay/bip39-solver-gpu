@@ -6,6 +6,7 @@
 
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include "sha512.cuh"
 
 // BIP32 constants
 #define BIP32_SEED_SIZE 64

@@ -3,20 +3,17 @@
 #ifndef HMAC_SHA512_CUH
 #define HMAC_SHA512_CUH
 
-// Forward declaration for device SHA-512 function
-__device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest);
-
-#include <stdint.h>
-#include <stddef.h>
+#include "sha512.cuh"
 
 __device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len,
                                             const uint8_t* message, size_t msg_len,
                                             uint8_t* digest) {
-    // ...implementation copied from pbkdf2.cu...
     uint8_t ipad[128];
     uint8_t opad[128];
     uint8_t inner_digest[64];
     uint8_t key_buf[128];
+    
+    // Key preprocessing
     if (key_len > 128) {
         cuda_sha512(key, key_len, key_buf);
         key_len = 64;
@@ -28,10 +25,14 @@ __device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len,
     for (size_t i = key_len; i < 128; i++) {
         key_buf[i] = 0;
     }
+    
+    // Create ipad and opad
     for (int i = 0; i < 128; i++) {
         ipad[i] = key_buf[i] ^ 0x36;
         opad[i] = key_buf[i] ^ 0x5c;
     }
+    
+    // Inner hash: SHA-512(ipad || message)
     uint8_t inner_msg[128 + 256];
     for (int i = 0; i < 128; i++) {
         inner_msg[i] = ipad[i];
@@ -40,6 +41,8 @@ __device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len,
         inner_msg[128 + i] = message[i];
     }
     cuda_sha512(inner_msg, 128 + msg_len, inner_digest);
+    
+    // Outer hash: SHA-512(opad || inner_digest)
     uint8_t outer_msg[128 + 64];
     for (int i = 0; i < 128; i++) {
         outer_msg[i] = opad[i];
