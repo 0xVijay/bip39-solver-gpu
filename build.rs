@@ -635,6 +635,83 @@ cl_int clReleaseContext(cl_context context) {
 cl_int clReleaseEvent(cl_event event) {
     return CL_PLATFORM_NOT_FOUND_KHR;
 }
+
+// Additional functions needed by opencl3 crate
+cl_int clGetProgramInfo(cl_program program, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetKernelInfo(cl_kernel kernel, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetProgramBuildInfo(cl_program program, cl_device_id device, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetContextInfo(cl_context context, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetMemObjectInfo(cl_mem memobj, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetCommandQueueInfo(cl_command_queue command_queue, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetEventInfo(cl_event event, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetEventProfilingInfo(cl_event event, cl_uint param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clWaitForEvents(cl_uint num_events, const cl_event* event_list) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainEvent(cl_event event) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainKernel(cl_kernel kernel) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainProgram(cl_program program) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainMemObject(cl_mem memobj) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainCommandQueue(cl_command_queue command_queue) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainContext(cl_context context) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clRetainDevice(cl_device_id device) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseDevice(cl_device_id device) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
 "#;
     
     std::fs::write(&stub_c_file, stub_content)
@@ -667,6 +744,7 @@ cl_int clReleaseEvent(cl_event event) {
     
     // Tell cargo to use our stub library instead of system OpenCL
     println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-lib=static=OpenCL");
     println!("cargo:warning=Created stub OpenCL library to prevent linking failures");
     
     Ok(())

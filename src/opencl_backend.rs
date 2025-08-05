@@ -34,7 +34,7 @@ impl OpenClBackend {
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
         use opencl3::context::Context;
         use opencl3::device::{get_all_devices, CL_DEVICE_TYPE_GPU, Device};
-        use opencl3::command_queue::{CommandQueue, CL_QUEUE_PROFILING_ENABLE};
+        use opencl3::command_queue::CommandQueue;
         use opencl3::program::Program;
         use opencl3::kernel::{ExecuteKernel, Kernel};
         use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE};
@@ -53,8 +53,8 @@ impl OpenClBackend {
         let device = Device::new(device_id);
         let context = Context::from_device(&device)?;
 
-        // Create command queue
-        let queue = CommandQueue::create_default(&context, CL_QUEUE_PROFILING_ENABLE)?;
+        // Create command queue (using newer API)
+        let queue = unsafe { CommandQueue::create(&context, device_id, 0)? };
 
         // Load OpenCL kernel source files
         let kernel_dir = PathBuf::from("cl");
@@ -327,17 +327,16 @@ impl GpuBackend for OpenClBackend {
 
     fn execute_batch(
         &self,
-        device_id: u32,
-        start_offset: u128,
-        batch_size: u128,
-        target_address: &str,
+        _device_id: u32,
+        _start_offset: u128,
+        _batch_size: u128,
+        _target_address: &str,
         _derivation_path: &str,
         _passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        // Use actual OpenCL GPU kernel processing
         #[cfg(feature = "opencl")]
         {
-            self.execute_opencl_kernel(device_id, start_offset, batch_size, target_address)
+            self.execute_opencl_kernel(_device_id, _start_offset, _batch_size, _target_address)
         }
         
         #[cfg(not(feature = "opencl"))]
