@@ -118,66 +118,41 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     // Find nvcc compiler
     let nvcc = find_nvcc()?;
     
-    // Compile all CUDA sources together to resolve cross-file dependencies
-    let combined_object = out_path.join("cuda_kernels.o");
-    let combined_lib = out_path.join("libcuda_kernels.a");
-    
-    println!("cargo:warning=Compiling CUDA kernels together to resolve dependencies...");
-    for source in sources {
-        println!("cargo:warning=Including CUDA source: {}", source);
-    }
-    
-    // Detect GPU architectures dynamically
+    // Compile each CUDA source file separately
+    let mut object_files = Vec::new();
     let gpu_architectures = detect_gpu_architectures();
     println!("cargo:warning=Detected GPU architectures: {:?}", gpu_architectures);
-    
-    // Prepare nvcc command with all source files
-    let mut nvcc_cmd = std::process::Command::new(&nvcc);
-    nvcc_cmd.args(&[
-        "-c",
-        "-o", combined_object.to_str().unwrap(),
-        "--compiler-options", "-fPIC",
-        "-O3",          // Optimize for performance
-        "--std=c++11",  // C++11 standard
-        "-Xptxas", "-O3", // PTX optimization
-        "-lineinfo",    // Debug info
-        "-Wno-deprecated-gpu-targets", // Suppress deprecated architecture warnings
-        "--disable-warnings", // Disable warnings being treated as errors
-    ]);
-    
-    // Add architecture flags for detected GPUs
-    for arch in &gpu_architectures {
-        nvcc_cmd.arg(&format!("-arch={}", arch));
-    }
-    
-    // Add all source files to the command
     for source in sources {
-        nvcc_cmd.arg(source);
-    }
-    
-    let output = nvcc_cmd
-        .output()
-        .map_err(|e| format!("Failed to execute nvcc: {}", e))?;
-    
-    // Check if compilation succeeded (warnings are OK)
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        
-        // If it's just warnings, continue
-        if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
-            println!("cargo:warning=CUDA compilation warnings: {}", stderr);
-        } else {
-            return Err(format!("nvcc compilation failed: {}{}", stderr, stdout));
+        println!("cargo:warning=Compiling CUDA source: {}", source);
+        let obj_name = format!("{}.o", source.replace("/", "_"));
+        let obj_path = out_path.join(&obj_name);
+        let mut nvcc_cmd = std::process::Command::new(&nvcc);
+        nvcc_cmd.args(&["-c", source, "-o", obj_path.to_str().unwrap(), "--compiler-options", "-fPIC", "-O3", "--std=c++11", "-Xptxas", "-O3", "-lineinfo", "-Wno-deprecated-gpu-targets", "--disable-warnings"]);
+        for arch in &gpu_architectures {
+            nvcc_cmd.arg(&format!("-arch={}", arch));
         }
-    } else {
-        println!("cargo:warning=CUDA kernels compiled successfully");
+        let output = nvcc_cmd.output().map_err(|e| format!("Failed to execute nvcc: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
+                println!("cargo:warning=CUDA compilation warnings: {}", stderr);
+            } else {
+                return Err(format!("nvcc compilation failed: {}{}", stderr, stdout));
+            }
+        } else {
+            println!("cargo:warning=Compiled {} to {}", source, obj_path.display());
+        }
+        object_files.push(obj_path);
     }
-    
-    // Create a static library from the combined object file
-    let ar_output = std::process::Command::new("ar")
-        .args(&["rcs", combined_lib.to_str().unwrap(), combined_object.to_str().unwrap()])
-        .output()
+    // Archive all object files into a static library
+    let combined_lib = out_path.join("libcuda_kernels.a");
+    let mut ar_cmd = std::process::Command::new("ar");
+    ar_cmd.arg("rcs").arg(combined_lib.to_str().unwrap());
+    for obj in &object_files {
+        ar_cmd.arg(obj.to_str().unwrap());
+    }
+    let ar_output = ar_cmd.output()
         .map_err(|e| format!("Failed to create static library: {}", e))?;
     
     if !ar_output.status.success() {
