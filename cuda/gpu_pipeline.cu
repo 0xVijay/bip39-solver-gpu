@@ -20,9 +20,6 @@ extern "C" {
         uint8_t* private_key
     );
 
-    // From secp256k1.cu
-    __device__ void scalar_mult(const uint32_t* scalar, ec_point* result);
-
     // From keccak256.cu
     __device__ void public_key_to_ethereum_address(const uint8_t* public_key, uint8_t* address);
 }
