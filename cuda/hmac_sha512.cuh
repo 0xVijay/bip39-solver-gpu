@@ -1,6 +1,10 @@
 // Shared inline device implementation for cuda_hmac_sha512
+
 #ifndef HMAC_SHA512_CUH
 #define HMAC_SHA512_CUH
+
+// Forward declaration for device SHA-512 function
+__device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest);
 
 #include <stdint.h>
 #include <stddef.h>
