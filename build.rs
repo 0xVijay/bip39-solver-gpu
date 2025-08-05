@@ -127,13 +127,16 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
         println!("cargo:warning=Including CUDA source: {}", source);
     }
     
+    // Detect GPU architectures dynamically
+    let gpu_architectures = detect_gpu_architectures();
+    println!("cargo:warning=Detected GPU architectures: {:?}", gpu_architectures);
+    
     // Prepare nvcc command with all source files
     let mut nvcc_cmd = std::process::Command::new(&nvcc);
     nvcc_cmd.args(&[
         "-c",
         "-o", combined_object.to_str().unwrap(),
         "--compiler-options", "-fPIC",
-        "-arch=sm_75",  // Modern GPU architecture (RTX 20XX+, V100+) - avoids deprecated warnings
         "-O3",          // Optimize for performance
         "--std=c++11",  // C++11 standard
         "-Xptxas", "-O3", // PTX optimization
@@ -141,6 +144,11 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
         "-Wno-deprecated-gpu-targets", // Suppress deprecated architecture warnings
         "--disable-warnings", // Disable warnings being treated as errors
     ]);
+    
+    // Add architecture flags for detected GPUs
+    for arch in &gpu_architectures {
+        nvcc_cmd.arg(&format!("-arch={}", arch));
+    }
     
     // Add all source files to the command
     for source in sources {
@@ -182,6 +190,166 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     println!("cargo:rustc-link-lib=static=cuda_kernels");
     
     Ok(())
+}
+
+fn detect_gpu_architectures() -> Vec<String> {
+    let mut architectures = Vec::new();
+    
+    // Try to detect using nvidia-smi first (most reliable for VastAI/Docker)
+    if let Ok(output) = std::process::Command::new("nvidia-smi")
+        .args(&["--query-gpu=name", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        if output.status.success() {
+            let gpu_names = String::from_utf8_lossy(&output.stdout);
+            for gpu_name in gpu_names.lines() {
+                let gpu_name = gpu_name.trim();
+                if let Some(arch) = map_gpu_name_to_architecture(gpu_name) {
+                    if !architectures.contains(&arch) {
+                        architectures.push(arch);
+                    }
+                }
+            }
+        }
+    }
+    
+    // If nvidia-smi detection failed, try using deviceQuery or direct CUDA API
+    if architectures.is_empty() {
+        if let Ok(arch) = detect_via_device_query() {
+            architectures.push(arch);
+        }
+    }
+    
+    // Fallback to common modern architectures if detection fails
+    if architectures.is_empty() {
+        println!("cargo:warning=Could not detect GPU architecture, using common fallbacks");
+        architectures = vec![
+            "sm_86".to_string(), // RTX 30XX, RTX 40XX (Ampere/Ada Lovelace)
+            "sm_80".to_string(), // A100 (Ampere)
+            "sm_75".to_string(), // RTX 20XX, V100 (Turing/Volta)
+        ];
+    }
+    
+    architectures
+}
+
+fn map_gpu_name_to_architecture(gpu_name: &str) -> Option<String> {
+    let gpu_name_lower = gpu_name.to_lowercase();
+    
+    // RTX 40XX series (Ada Lovelace) - sm_89
+    if gpu_name_lower.contains("rtx 40") || gpu_name_lower.contains("rtx40") {
+        return Some("sm_89".to_string());
+    }
+    
+    // RTX 30XX series (Ampere) - sm_86
+    if gpu_name_lower.contains("rtx 30") || gpu_name_lower.contains("rtx30") || 
+       gpu_name_lower.contains("rtx 3060") || gpu_name_lower.contains("rtx 3070") ||
+       gpu_name_lower.contains("rtx 3080") || gpu_name_lower.contains("rtx 3090") {
+        return Some("sm_86".to_string());
+    }
+    
+    // RTX 20XX series (Turing) - sm_75
+    if gpu_name_lower.contains("rtx 20") || gpu_name_lower.contains("rtx20") ||
+       gpu_name_lower.contains("rtx 2060") || gpu_name_lower.contains("rtx 2070") ||
+       gpu_name_lower.contains("rtx 2080") {
+        return Some("sm_75".to_string());
+    }
+    
+    // GTX 16XX series (Turing) - sm_75
+    if gpu_name_lower.contains("gtx 16") || gpu_name_lower.contains("gtx16") ||
+       gpu_name_lower.contains("gtx 1660") || gpu_name_lower.contains("gtx 1650") {
+        return Some("sm_75".to_string());
+    }
+    
+    // Tesla V100 (Volta) - sm_70
+    if gpu_name_lower.contains("v100") {
+        return Some("sm_70".to_string());
+    }
+    
+    // Tesla T4 (Turing) - sm_75
+    if gpu_name_lower.contains("t4") {
+        return Some("sm_75".to_string());
+    }
+    
+    // Tesla A100 (Ampere) - sm_80
+    if gpu_name_lower.contains("a100") {
+        return Some("sm_80".to_string());
+    }
+    
+    // Tesla A10/A30/A40 (Ampere) - sm_86
+    if gpu_name_lower.contains("a10") || gpu_name_lower.contains("a30") || gpu_name_lower.contains("a40") {
+        return Some("sm_86".to_string());
+    }
+    
+    // GTX 10XX series (Pascal) - sm_61/sm_60
+    if gpu_name_lower.contains("gtx 10") || gpu_name_lower.contains("gtx10") ||
+       gpu_name_lower.contains("gtx 1080") || gpu_name_lower.contains("gtx 1070") ||
+       gpu_name_lower.contains("gtx 1060") {
+        return Some("sm_61".to_string());
+    }
+    
+    // Titan series
+    if gpu_name_lower.contains("titan") {
+        if gpu_name_lower.contains("rtx") {
+            return Some("sm_75".to_string()); // Titan RTX
+        } else {
+            return Some("sm_61".to_string()); // Older Titans
+        }
+    }
+    
+    // Quadro series (approximate based on generation)
+    if gpu_name_lower.contains("quadro") {
+        if gpu_name_lower.contains("rtx") {
+            return Some("sm_75".to_string()); // Quadro RTX series
+        } else {
+            return Some("sm_61".to_string()); // Older Quadro
+        }
+    }
+    
+    println!("cargo:warning=Unknown GPU: {}, using sm_75 as fallback", gpu_name);
+    Some("sm_75".to_string()) // Safe fallback for unknown GPUs
+}
+
+fn detect_via_device_query() -> Result<String, String> {
+    // Try to find deviceQuery utility (often included with CUDA samples)
+    let device_query_paths = [
+        "deviceQuery",
+        "/usr/local/cuda/extras/demo_suite/deviceQuery",
+        "/usr/local/cuda/bin/deviceQuery",
+        "/opt/cuda/extras/demo_suite/deviceQuery",
+    ];
+    
+    for path in &device_query_paths {
+        if let Ok(output) = std::process::Command::new(path).output() {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                
+                // Parse compute capability from deviceQuery output
+                for line in output_str.lines() {
+                    if line.contains("CUDA Capability Major/Minor version number") {
+                        if let Some(capability) = extract_compute_capability(line) {
+                            return Ok(format!("sm_{}", capability.replace(".", "")));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Err("Could not detect via deviceQuery".to_string())
+}
+
+fn extract_compute_capability(line: &str) -> Option<String> {
+    // Extract version like "7.5" from line containing capability info
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    for part in parts {
+        if part.contains('.') && part.len() <= 4 {
+            if let Ok(_) = part.parse::<f32>() {
+                return Some(part.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn find_nvcc() -> Result<String, String> {

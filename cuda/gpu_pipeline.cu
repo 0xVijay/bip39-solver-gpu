@@ -6,6 +6,8 @@
 
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <cstring>
+#include <algorithm>
 
 // Include kernels from other modules
 extern "C" {
@@ -197,52 +199,179 @@ extern "C" int cuda_complete_pipeline_host(
     uint32_t* match_results,
     uint32_t count
 ) {
-    // Calculate thread configuration
-    int block_size = 256;
+    // Validate input parameters
+    if (!mnemonics || !passphrases || !address_indices || !target_address || 
+        !found_addresses || !match_results || count == 0) {
+        return -1;
+    }
+    
+    // Check for hardware compatibility first
+    int device_count;
+    cudaError_t error = cudaGetDeviceCount(&device_count);
+    if (error != cudaSuccess || device_count == 0) {
+        return -1;
+    }
+    
+    // Get device properties to verify compatibility
+    cudaDeviceProp prop;
+    error = cudaGetDeviceProperties(&prop, 0);
+    if (error != cudaSuccess) {
+        return -1;
+    }
+    
+    // Ensure device has sufficient compute capability (at least 3.5 for modern features)
+    if (prop.major < 3 || (prop.major == 3 && prop.minor < 5)) {
+        return -1; // Insufficient compute capability
+    }
+    
+    // Calculate thread configuration based on device properties
+    int block_size = min(256, prop.maxThreadsPerBlock);
     int grid_size = (count + block_size - 1) / block_size;
     
-    // Allocate device memory
-    char** d_mnemonics;
-    char** d_passphrases;
-    uint32_t* d_address_indices;
-    uint8_t* d_target_address;
-    uint8_t* d_found_addresses;
-    uint32_t* d_match_results;
+    // Limit grid size to prevent memory overflow
+    if (grid_size > prop.maxGridSize[0]) {
+        grid_size = prop.maxGridSize[0];
+    }
     
-    cudaMalloc(&d_mnemonics, count * sizeof(char*));
-    cudaMalloc(&d_passphrases, count * sizeof(char*));
-    cudaMalloc(&d_address_indices, count * sizeof(uint32_t));
-    cudaMalloc(&d_target_address, 20);
-    cudaMalloc(&d_found_addresses, count * 20);
-    cudaMalloc(&d_match_results, count * sizeof(uint32_t));
+    // Allocate device memory with error checking
+    char** d_mnemonics = nullptr;
+    char** d_passphrases = nullptr;
+    char** d_mnemonic_strings = nullptr;
+    char** d_passphrase_strings = nullptr;
+    uint32_t* d_address_indices = nullptr;
+    uint8_t* d_target_address = nullptr;
+    uint8_t* d_found_addresses = nullptr;
+    uint32_t* d_match_results = nullptr;
     
-    // Copy string arrays (simplified for performance)
-    // In production, need proper string copying
-    cudaMemcpy(d_address_indices, address_indices, count * sizeof(uint32_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_target_address, target_address, 20, cudaMemcpyHostToDevice);
+    // Calculate total string memory needed
+    size_t total_mnemonic_size = 0;
+    size_t total_passphrase_size = 0;
     
-    // Launch kernel
+    for (uint32_t i = 0; i < count; i++) {
+        if (mnemonics[i]) {
+            total_mnemonic_size += strlen(mnemonics[i]) + 1;
+        }
+        if (passphrases[i]) {
+            total_passphrase_size += strlen(passphrases[i]) + 1;
+        }
+    }
+    
+    // Allocate device memory with error checking
+    error = cudaMalloc(&d_mnemonics, count * sizeof(char*));
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_passphrases, count * sizeof(char*));
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_mnemonic_strings, total_mnemonic_size);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_passphrase_strings, total_passphrase_size);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_address_indices, count * sizeof(uint32_t));
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_target_address, 20);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_found_addresses, count * 20);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMalloc(&d_match_results, count * sizeof(uint32_t));
+    if (error != cudaSuccess) goto cleanup;
+    
+    // Copy strings to device memory properly
+    char* mnemonic_ptr = (char*)d_mnemonic_strings;
+    char* passphrase_ptr = (char*)d_passphrase_strings;
+    char** host_mnemonic_ptrs = new char*[count];
+    char** host_passphrase_ptrs = new char*[count];
+    
+    for (uint32_t i = 0; i < count; i++) {
+        if (mnemonics[i]) {
+            size_t len = strlen(mnemonics[i]) + 1;
+            cudaMemcpy(mnemonic_ptr, mnemonics[i], len, cudaMemcpyHostToDevice);
+            host_mnemonic_ptrs[i] = mnemonic_ptr;
+            mnemonic_ptr += len;
+        } else {
+            host_mnemonic_ptrs[i] = nullptr;
+        }
+        
+        if (passphrases[i]) {
+            size_t len = strlen(passphrases[i]) + 1;
+            cudaMemcpy(passphrase_ptr, passphrases[i], len, cudaMemcpyHostToDevice);
+            host_passphrase_ptrs[i] = passphrase_ptr;
+            passphrase_ptr += len;
+        } else {
+            host_passphrase_ptrs[i] = nullptr;
+        }
+    }
+    
+    // Copy pointer arrays to device
+    error = cudaMemcpy(d_mnemonics, host_mnemonic_ptrs, count * sizeof(char*), cudaMemcpyHostToDevice);
+    if (error != cudaSuccess) {
+        delete[] host_mnemonic_ptrs;
+        delete[] host_passphrase_ptrs;
+        goto cleanup;
+    }
+    
+    error = cudaMemcpy(d_passphrases, host_passphrase_ptrs, count * sizeof(char*), cudaMemcpyHostToDevice);
+    if (error != cudaSuccess) {
+        delete[] host_mnemonic_ptrs;
+        delete[] host_passphrase_ptrs;
+        goto cleanup;
+    }
+    
+    delete[] host_mnemonic_ptrs;
+    delete[] host_passphrase_ptrs;
+    
+    // Copy other data
+    error = cudaMemcpy(d_address_indices, address_indices, count * sizeof(uint32_t), cudaMemcpyHostToDevice);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMemcpy(d_target_address, target_address, 20, cudaMemcpyHostToDevice);
+    if (error != cudaSuccess) goto cleanup;
+    
+    // Initialize output arrays
+    error = cudaMemset(d_found_addresses, 0, count * 20);
+    if (error != cudaSuccess) goto cleanup;
+    
+    error = cudaMemset(d_match_results, 0, count * sizeof(uint32_t));
+    if (error != cudaSuccess) goto cleanup;
+    
+    // Launch kernel with error checking
     cuda_complete_pipeline_batch<<<grid_size, block_size>>>(
         d_mnemonics, d_passphrases, d_address_indices, d_target_address,
         d_found_addresses, d_match_results, count
     );
     
-    // Wait for completion
-    cudaDeviceSynchronize();
+    // Check kernel launch error
+    error = cudaGetLastError();
+    if (error != cudaSuccess) goto cleanup;
+    
+    // Wait for completion with timeout
+    error = cudaDeviceSynchronize();
+    if (error != cudaSuccess) goto cleanup;
     
     // Copy results back
-    cudaMemcpy(found_addresses, d_found_addresses, count * 20, cudaMemcpyDeviceToHost);
-    cudaMemcpy(match_results, d_match_results, count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    error = cudaMemcpy(found_addresses, d_found_addresses, count * 20, cudaMemcpyDeviceToHost);
+    if (error != cudaSuccess) goto cleanup;
     
-    // Cleanup
-    cudaFree(d_mnemonics);
-    cudaFree(d_passphrases);
-    cudaFree(d_address_indices);
-    cudaFree(d_target_address);
-    cudaFree(d_found_addresses);
-    cudaFree(d_match_results);
+    error = cudaMemcpy(match_results, d_match_results, count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    if (error != cudaSuccess) goto cleanup;
     
-    return cudaGetLastError() == cudaSuccess ? 0 : -1;
+cleanup:
+    // Cleanup device memory
+    if (d_mnemonics) cudaFree(d_mnemonics);
+    if (d_passphrases) cudaFree(d_passphrases);
+    if (d_mnemonic_strings) cudaFree(d_mnemonic_strings);
+    if (d_passphrase_strings) cudaFree(d_passphrase_strings);
+    if (d_address_indices) cudaFree(d_address_indices);
+    if (d_target_address) cudaFree(d_target_address);
+    if (d_found_addresses) cudaFree(d_found_addresses);
+    if (d_match_results) cudaFree(d_match_results);
+    
+    return error == cudaSuccess ? 0 : -1;
 }
 
 /**
