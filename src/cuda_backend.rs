@@ -931,13 +931,17 @@ impl GpuBackend for CudaBackend {
 
         let mut devices = Vec::new();
 
+        use crate::gpu_models::SUPPORTED_GPU_MODELS;
         for i in 0..device_count {
-            let (device_name, memory, compute_units) = 
-                self.get_device_info(i);
-
+            let (device_name, memory, compute_units) = self.get_device_info(i);
+            // Try to match against known models
+            let matched_name = SUPPORTED_GPU_MODELS.iter()
+                .find(|model| device_name.replace(" ", "").to_lowercase().contains(&model.replace(" ", "").to_lowercase()))
+                .map(|model| model.to_string())
+                .unwrap_or(device_name.clone());
             devices.push(GpuDevice {
                 id: i as u32,
-                name: device_name,
+                name: matched_name,
                 memory,
                 compute_units,
             });

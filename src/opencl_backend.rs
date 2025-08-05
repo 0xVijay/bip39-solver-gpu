@@ -59,34 +59,36 @@ impl OpenClBackend {
         #[cfg(feature = "opencl")]
         {
             use opencl3::device::{get_all_devices, CL_DEVICE_TYPE_GPU, Device};
+            use crate::gpu_models::SUPPORTED_GPU_MODELS;
 
             let gpu_devices = get_all_devices(CL_DEVICE_TYPE_GPU)?;
             let mut devices = Vec::new();
 
             for (id, device_id) in gpu_devices.iter().enumerate() {
                 let device = Device::new(*device_id);
-                
                 // Get actual device name
                 let device_name = match device.name() {
                     Ok(name) => name,
                     Err(_) => format!("OpenCL GPU Device {}", id),
                 };
-                
+                // Try to match against known models
+                let matched_name = SUPPORTED_GPU_MODELS.iter()
+                    .find(|model| device_name.contains(&model.replace(" ", "")))
+                    .map(|model| model.to_string())
+                    .unwrap_or(device_name.clone());
                 // Get actual memory size
                 let memory = match device.global_mem_size() {
                     Ok(mem) => mem as u64,
                     Err(_) => 4 * 1024 * 1024 * 1024, // 4GB default
                 };
-                
                 // Get actual compute units
                 let compute_units = match device.max_compute_units() {
                     Ok(units) => units as u32,
                     Err(_) => 16, // Default
                 };
-
                 devices.push(GpuDevice {
                     id: id as u32,
-                    name: device_name,
+                    name: matched_name,
                     memory,
                     compute_units,
                 });
