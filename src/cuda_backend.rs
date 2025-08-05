@@ -1,6 +1,7 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
+use crate::eth::{derive_ethereum_address, addresses_equal};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -91,11 +92,22 @@ impl CudaBackend {
     }
 
     /// Check if CUDA is available by trying to get device count
+    /// This checks runtime availability, not just build-time compilation
     #[cfg(feature = "cuda")]
     fn is_cuda_available(&self) -> bool {
-        let mut count = 0;
-        unsafe {
-            cuda_get_device_count(&mut count) == 0 && count > 0
+        // First check if CUDA was compiled with kernels
+        #[cfg(cuda_available)]
+        {
+            let mut count = 0;
+            unsafe {
+                cuda_get_device_count(&mut count) == 0 && count > 0
+            }
+        }
+        
+        // If CUDA kernels weren't compiled, try dynamic loading (VastAI/Docker environments)
+        #[cfg(not(cuda_available))]
+        {
+            self.check_cuda_runtime_dynamic()
         }
     }
     
@@ -103,23 +115,288 @@ impl CudaBackend {
     fn is_cuda_available(&self) -> bool {
         false
     }
+    
+    /// Check CUDA runtime availability dynamically (for VastAI/Docker environments)
+    #[cfg(feature = "cuda")]
+    fn check_cuda_runtime_dynamic(&self) -> bool {
+        use std::process::Command;
+        
+        // Check if nvidia-smi works (indicates CUDA runtime is available)
+        if let Ok(output) = Command::new("nvidia-smi").arg("--query-gpu=count").arg("--format=csv,noheader,nounits").output() {
+            if output.status.success() {
+                if let Ok(count_str) = String::from_utf8(output.stdout) {
+                    if let Ok(count) = count_str.trim().parse::<i32>() {
+                        println!("Found {} CUDA device(s) via nvidia-smi", count);
+                        return count > 0;
+                    }
+                }
+            }
+        }
+        
+        // Check for CUDA library files
+        let cuda_lib_paths = [
+            "/usr/lib/x86_64-linux-gnu/libcudart.so",
+            "/usr/local/cuda/lib64/libcudart.so",
+            "/usr/local/cuda-12/lib64/libcudart.so",
+            "/usr/local/cuda-11/lib64/libcudart.so",
+            "/opt/cuda/lib64/libcudart.so",
+        ];
+        
+        for path in &cuda_lib_paths {
+            if std::path::Path::new(path).exists() {
+                println!("Found CUDA runtime library at: {}", path);
+                return true;
+            }
+        }
+        
+        false
+    }
 
     /// Get the number of CUDA devices
     #[cfg(feature = "cuda")]
     fn get_device_count(&self) -> Result<i32, String> {
-        let mut count = 0;
-        let result = unsafe { cuda_get_device_count(&mut count) };
+        // If CUDA was compiled with kernels, use direct API
+        #[cfg(cuda_available)]
+        {
+            let mut count = 0;
+            let result = unsafe { cuda_get_device_count(&mut count) };
+            
+            if result == 0 {
+                return Ok(count);
+            } else {
+                return Err(format!("CUDA error getting device count: {}", result));
+            }
+        }
         
-        if result == 0 {
-            Ok(count)
-        } else {
-            Err(format!("CUDA error getting device count: {}", result))
+        // For VastAI/Docker environments, use nvidia-smi
+        #[cfg(not(cuda_available))]
+        {
+            self.get_device_count_dynamic()
         }
     }
     
     #[cfg(not(feature = "cuda"))]
     fn get_device_count(&self) -> Result<i32, String> {
         Err("CUDA support not compiled".to_string())
+    }
+    
+    /// Get device count via nvidia-smi (for VastAI/Docker environments)
+    #[cfg(feature = "cuda")]
+    fn get_device_count_dynamic(&self) -> Result<i32, String> {
+        use std::process::Command;
+        
+        if let Ok(output) = Command::new("nvidia-smi").arg("--query-gpu=count").arg("--format=csv,noheader,nounits").output() {
+            if output.status.success() {
+                if let Ok(count_str) = String::from_utf8(output.stdout) {
+                    if let Ok(count) = count_str.trim().parse::<i32>() {
+                        return Ok(count);
+                    }
+                }
+            }
+        }
+        
+        // Alternative: count GPU devices via nvidia-ml-py or nvidia-smi
+        if let Ok(output) = Command::new("nvidia-smi").arg("-L").output() {
+            if output.status.success() {
+                let gpu_lines = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter(|line| line.contains("GPU"))
+                    .count();
+                return Ok(gpu_lines as i32);
+            }
+        }
+        
+        Err("Could not determine CUDA device count via nvidia-smi".to_string())
+    }
+    
+    /// Get device info via nvidia-smi (for VastAI/Docker environments)
+    #[cfg(feature = "cuda")]
+    fn get_device_info_via_nvidia_smi(&self, device_id: i32) -> (String, u64, u32) {
+        use std::process::Command;
+        
+        // Query device name and memory
+        if let Ok(output) = Command::new("nvidia-smi")
+            .args(&[
+                "--query-gpu=name,memory.total", 
+                "--format=csv,noheader,nounits",
+                &format!("--id={}", device_id)
+            ])
+            .output() 
+        {
+            if output.status.success() {
+                if let Ok(info) = String::from_utf8(output.stdout) {
+                    let parts: Vec<&str> = info.trim().split(',').collect();
+                    if parts.len() >= 2 {
+                        let name = parts[0].trim().to_string();
+                        let memory = parts[1].trim().parse::<u64>()
+                            .unwrap_or(8192) * 1024 * 1024; // Convert MB to bytes
+                        
+                        // Estimate compute units based on GPU name
+                        let compute_units = self.estimate_compute_units(&name);
+                        
+                        return (name, memory, compute_units);
+                    }
+                }
+            }
+        }
+        
+        // Fallback to generic naming
+        (
+            format!("CUDA Device {}", device_id),
+            8 * 1024 * 1024 * 1024, // 8GB default
+            80,                      // Default compute units
+        )
+    }
+    
+    /// Execute batch processing in fallback mode (CUDA runtime available but kernels not compiled)
+    #[cfg(feature = "cuda")]
+    fn execute_batch_fallback_mode(
+        &self,
+        _device_id: u32,
+        start_offset: u128,
+        batch_size: u128,
+        target_address: &str,
+        derivation_path: &str,
+        passphrase: &str,
+    ) -> Result<GpuBatchResult, GpuError> {
+        // In fallback mode, we do CPU processing with GPU device context
+        // This maintains compatibility when CUDA is detected but kernels aren't available
+        
+        println!("Using fallback CPU processing on GPU device context...");
+        
+        let word_space = self.word_space.as_ref().ok_or_else(|| {
+            GpuError::DeviceInitFailed {
+                device_id: _device_id,
+                device_name: format!("CUDA Device {}", _device_id),
+                error: "Word space not initialized".to_string(),
+                timestamp: current_timestamp(),
+            }
+        })?;
+
+        // Parse target address
+        let target_address_cleaned = target_address.trim_start_matches("0x");
+        let target_address_bytes = hex::decode(target_address_cleaned)
+            .map_err(|_| GpuError::DeviceInitFailed {
+                device_id: _device_id,
+                device_name: format!("CUDA Device {}", _device_id),
+                error: "Invalid target address format".to_string(),
+                timestamp: current_timestamp(),
+            })?;
+
+        if target_address_bytes.len() != 20 {
+            return Err(GpuError::DeviceInitFailed {
+                device_id: _device_id,
+                device_name: format!("CUDA Device {}", _device_id),
+                error: "Target address must be 20 bytes".to_string(),
+                timestamp: current_timestamp(),
+            });
+        }
+
+        let mut target_address_array = [0u8; 20];
+        target_address_array.copy_from_slice(&target_address_bytes);
+
+        // Process small batches in CPU mode
+        let fallback_batch_size = std::cmp::min(batch_size, 1000) as usize;
+        
+        for batch_start in (0..fallback_batch_size).step_by(100) {
+            let batch_end = std::cmp::min(batch_start + 100, fallback_batch_size);
+            
+            for i in batch_start..batch_end {
+                let current_offset = start_offset + i as u128;
+                
+                if let Some(word_indices) = word_space.index_to_words(current_offset) {
+                    if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
+                        let address = derive_ethereum_address(&mnemonic, passphrase, derivation_path)
+                            .map_err(|e| GpuError::KernelExecutionFailed {
+                                device_id: _device_id,
+                                kernel_name: "fallback_cpu".to_string(),
+                                error: format!("Address derivation failed: {}", e),
+                                timestamp: current_timestamp(),
+                            })?;
+
+                        let address_hex = format!("0x{}", hex::encode(address));
+                        if addresses_equal(&address_hex, target_address) {
+                            return Ok(GpuBatchResult {
+                                mnemonic: Some(mnemonic),
+                                address: Some(address_hex),
+                                offset: Some(current_offset),
+                                processed_count: (i + 1) as u128,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(GpuBatchResult {
+            mnemonic: None,
+            address: None,
+            offset: None,
+            processed_count: fallback_batch_size as u128,
+        })
+    }
+    
+    /// Estimate compute units based on GPU name
+    #[cfg(feature = "cuda")]
+    fn estimate_compute_units(&self, gpu_name: &str) -> u32 {
+        let name_lower = gpu_name.to_lowercase();
+        
+        // Common GPU families and their typical compute unit counts
+        if name_lower.contains("rtx 4090") { 128 }
+        else if name_lower.contains("rtx 4080") { 104 } 
+        else if name_lower.contains("rtx 4070") { 84 }
+        else if name_lower.contains("rtx 3090") { 82 }
+        else if name_lower.contains("rtx 3080") { 68 }
+        else if name_lower.contains("rtx 3070") { 46 }
+        else if name_lower.contains("rtx 3060") { 28 }
+        else if name_lower.contains("v100") { 80 }
+        else if name_lower.contains("a100") { 108 }
+        else if name_lower.contains("h100") { 144 }
+        else if name_lower.contains("t4") { 40 }
+        else if name_lower.contains("k80") { 26 }
+        else if name_lower.contains("p100") { 56 }
+        else { 80 } // Default estimate
+    }
+    
+    /// Get device info for a specific device ID
+    #[cfg(feature = "cuda")]
+    fn get_device_info_for_id(&self, device_id: i32) -> (String, u64, u32) {
+        // Try to get properties via CUDA API if compiled with kernels
+        #[cfg(cuda_available)]
+        {
+            let mut properties = CudaDeviceProperties {
+                name: [0; 256],
+                total_global_mem: 0,
+                multiprocessor_count: 0,
+                max_threads_per_block: 0,
+            };
+
+            let result = unsafe { cuda_get_device_properties(&mut properties, device_id) };
+            
+            if result == 0 {
+                // Extract device name from C-string
+                let name_end = properties.name.iter().position(|&c| c == 0).unwrap_or(255);
+                let device_name = String::from_utf8_lossy(&properties.name[..name_end]).to_string();
+                
+                return (
+                    device_name,
+                    properties.total_global_mem as u64,
+                    properties.multiprocessor_count as u32,
+                );
+            }
+        }
+        
+        // Fallback to nvidia-smi for VastAI/Docker environments or if CUDA API fails
+        self.get_device_info_via_nvidia_smi(device_id)
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn get_device_info_for_id(&self, device_id: i32) -> (String, u64, u32) {
+        (
+            format!("CUDA Device {}", device_id),
+            8 * 1024 * 1024 * 1024, // 8GB default
+            80,                      // Default compute units
+        )
     }
 
     /// Complete GPU pipeline: Mnemonic → Address with target matching - only when CUDA is available
@@ -446,7 +723,16 @@ impl CudaBackend {
         
         #[cfg(all(feature = "cuda", not(cuda_available)))]
         {
-            return Err("CUDA toolkit not available at build time. Install CUDA toolkit and rebuild.".into());
+            // For VastAI/Docker environments, CUDA runtime may be available even if kernels weren't compiled
+            println!("CUDA kernels not compiled, but checking runtime availability...");
+            if self.is_cuda_available() {
+                println!("CUDA runtime detected via nvidia-smi, but kernels not available.");
+                println!("Note: GPU operations will use simplified processing without optimized kernels.");
+                return self.execute_batch_fallback_mode(0, start_offset, batch_size, target_address, _derivation_path, passphrase)
+                    .map_err(|e| Box::new(e) as Box<dyn Error>);
+            } else {
+                return Err("CUDA runtime not available. Install NVIDIA drivers and CUDA toolkit.".into());
+            }
         }
         
         #[cfg(not(feature = "cuda"))]
@@ -545,33 +831,8 @@ impl GpuBackend for CudaBackend {
         let mut devices = Vec::new();
 
         for i in 0..device_count {
-            let mut properties = CudaDeviceProperties {
-                name: [0; 256],
-                total_global_mem: 0,
-                multiprocessor_count: 0,
-                max_threads_per_block: 0,
-            };
-
-            let result = unsafe { cuda_get_device_properties(&mut properties, i) };
-            
-            let (device_name, memory, compute_units) = if result == 0 {
-                // Extract device name from C-string
-                let name_end = properties.name.iter().position(|&c| c == 0).unwrap_or(255);
-                let device_name = String::from_utf8_lossy(&properties.name[..name_end]).to_string();
-                
-                (
-                    device_name,
-                    properties.total_global_mem as u64,
-                    properties.multiprocessor_count as u32,
-                )
-            } else {
-                // Fallback to generic naming if property query fails
-                (
-                    format!("CUDA Device {}", i),
-                    8 * 1024 * 1024 * 1024, // 8GB default
-                    80,                      // Default compute units
-                )
-            };
+            let (device_name, memory, compute_units) = 
+                self.get_device_info_for_id(i);
 
             devices.push(GpuDevice {
                 id: i as u32,

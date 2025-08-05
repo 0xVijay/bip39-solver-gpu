@@ -231,10 +231,15 @@ fn is_opencl_available() -> bool {
         "/usr/local/lib/libOpenCL.so.1",
         "/opt/intel/opencl/lib64/libOpenCL.so",
         "/opt/intel/opencl/lib64/libOpenCL.so.1",
+        "/opt/amdgpu/lib64/libOpenCL.so",
+        "/opt/amdgpu/lib64/libOpenCL.so.1",
+        "/usr/lib64/libOpenCL.so",
+        "/usr/lib64/libOpenCL.so.1",
     ];
     
     for path in &opencl_paths {
         if std::path::Path::new(path).exists() {
+            println!("cargo:warning=Found OpenCL library at: {}", path);
             return true;
         }
     }
@@ -245,7 +250,22 @@ fn is_opencl_available() -> bool {
         .output()
     {
         if output.status.success() {
+            println!("cargo:warning=Found OpenCL via pkg-config");
             return true;
+        }
+    }
+    
+    // Try ldconfig to search for OpenCL libraries
+    if let Ok(output) = std::process::Command::new("ldconfig")
+        .args(&["-p"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            if output_str.contains("libOpenCL.so") {
+                println!("cargo:warning=Found OpenCL via ldconfig");
+                return true;
+            }
         }
     }
     
@@ -258,7 +278,9 @@ fn is_opencl_available() -> bool {
     
     for path in &header_paths {
         if std::path::Path::new(path).exists() {
-            return true;
+            println!("cargo:warning=Found OpenCL headers at: {}", path);
+            // Only return true if we also have libraries
+            continue;
         }
     }
     
