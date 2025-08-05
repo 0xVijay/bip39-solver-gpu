@@ -1,8 +1,9 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::gpu_models::SUPPORTED_GPU_MODELS;
+// Removed unused import; will import locally where needed
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
-use crate::eth::{derive_ethereum_address, addresses_equal};
+// use crate::eth::*; // Only import where used
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -664,7 +665,7 @@ impl CudaBackend {
     }
 
     /// Get device memory for a CUDA device
-    fn get_device_memory(&self, device_id: u32) -> u64 {
+    fn get_device_memory(&self, _device_id: u32) -> u64 {
         #[cfg(all(feature = "cuda", cuda_available))]
         {
             use std::mem;
@@ -920,6 +921,7 @@ impl GpuBackend for CudaBackend {
     }
 
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
+        // Use SUPPORTED_GPU_MODELS from top-level import
         println!("Enumerating CUDA devices...");
 
         let device_count = self.get_device_count()
@@ -927,7 +929,6 @@ impl GpuBackend for CudaBackend {
 
         let mut devices = Vec::new();
 
-        use crate::gpu_models::SUPPORTED_GPU_MODELS;
         for i in 0..device_count {
             let (device_name, memory, compute_units) = self.get_device_info(i);
             // Try to match against known models
