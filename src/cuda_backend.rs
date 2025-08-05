@@ -1,8 +1,8 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
-// Removed unused import; will import locally where needed
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
-// use crate::eth::*; // Only import where used
+#[cfg(feature = "cuda")]
+use crate::eth::{derive_ethereum_address, addresses_equal};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -283,6 +283,7 @@ impl CudaBackend {
     }
 
     /// Estimate compute units (SMs) based on GPU name
+    #[allow(dead_code)]
     fn estimate_compute_units(&self, gpu_name: &str) -> u32 {
         let gpu_name_lower = gpu_name.to_lowercase();
         
@@ -920,7 +921,6 @@ impl GpuBackend for CudaBackend {
     }
 
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
-        use crate::gpu_models::SUPPORTED_GPU_MODELS;
         println!("Enumerating CUDA devices...");
 
         let device_count = self.get_device_count()
@@ -930,14 +930,10 @@ impl GpuBackend for CudaBackend {
 
         for i in 0..device_count {
             let (device_name, memory, compute_units) = self.get_device_info(i);
-            // Try to match against known models
-            let matched_name = SUPPORTED_GPU_MODELS.iter()
-                .find(|model| device_name.replace(" ", "").to_lowercase().contains(&model.replace(" ", "").to_lowercase()))
-                .map(|model| model.to_string())
-                .unwrap_or(device_name.clone());
+
             devices.push(GpuDevice {
                 id: i as u32,
-                name: matched_name,
+                name: device_name,
                 memory,
                 compute_units,
             });
