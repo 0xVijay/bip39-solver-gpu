@@ -665,13 +665,13 @@ impl CudaBackend {
     }
 
     /// Get device memory for a CUDA device
-    fn get_device_memory(&self, device_id: u32) -> u64 {
+    fn get_device_memory(&self, _device_id: u32) -> u64 {
         #[cfg(all(feature = "cuda", cuda_available))]
         {
             use std::mem;
             let mut properties: CudaDeviceProperties = unsafe { mem::zeroed() };
             unsafe {
-                if cuda_get_device_properties(&mut properties, device_id as i32) == 0 {
+                if cuda_get_device_properties(&mut properties, _device_id as i32) == 0 {
                     return properties.total_global_mem as u64;
                 }
             }
@@ -684,7 +684,7 @@ impl CudaBackend {
                 .args(&[
                     "--query-gpu=memory.total", 
                     "--format=csv,noheader,nounits",
-                    &format!("--id={}", device_id)
+                    &format!("--id={}", _device_id)
                 ])
                 .output() 
             {

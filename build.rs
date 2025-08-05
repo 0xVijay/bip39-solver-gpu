@@ -8,6 +8,8 @@ fn main() {
     
     let features = env::var("CARGO_CFG_TARGET_FEATURES").unwrap_or_default();
     println!("cargo:rustc-cfg=features=\"{}\"", features);
+    
+    let out_dir = env::var("OUT_DIR").unwrap();
 
     // Check if CUDA feature is enabled
     if env::var("CARGO_FEATURE_CUDA").is_ok() {
@@ -86,14 +88,16 @@ fn main() {
         if is_opencl_available() {
             println!("cargo:rustc-cfg=opencl_available");
             println!("cargo:warning=OpenCL libraries found successfully");
-            
-            // Enable the opencl-runtime feature which pulls in opencl3 dependency
-            println!("cargo:rustc-cfg=feature=\"opencl-runtime\"");
         } else {
             println!("cargo:warning=OpenCL libraries not found. Install OpenCL drivers for GPU support.");
             println!("cargo:warning=Building without OpenCL support. GPU operations will not be available.");
             
-            // Do not enable opencl-runtime feature, so opencl3 won't be linked
+            // Create stub OpenCL library to prevent linking failures
+            // This is a workaround for opencl-sys always trying to link OpenCL
+            if let Err(e) = create_stub_opencl_library(&out_dir) {
+                println!("cargo:warning=Failed to create OpenCL stub: {}", e);
+                println!("cargo:warning=OpenCL compilation may fail due to missing libraries");
+            }
         }
     }
 }
@@ -415,4 +419,162 @@ fn is_opencl_available() -> bool {
     }
     
     false
+}
+
+fn create_stub_opencl_library(out_dir: &str) -> Result<(), String> {
+    let out_path = PathBuf::from(out_dir);
+    
+    // Create a stub library that provides empty OpenCL symbols
+    let stub_c_file = out_path.join("opencl_stub.c");
+    let stub_content = r#"
+// Stub OpenCL implementation to prevent linking errors when OpenCL is not available
+// These functions will return error codes indicating OpenCL is not available
+
+typedef int cl_int;
+typedef void* cl_platform_id;
+typedef void* cl_device_id;
+typedef void* cl_context;
+typedef void* cl_command_queue;
+typedef void* cl_mem;
+typedef void* cl_program;
+typedef void* cl_kernel;
+typedef void* cl_event;
+typedef unsigned int cl_uint;
+typedef unsigned long size_t;
+typedef unsigned long cl_ulong;
+typedef size_t cl_size_t;
+typedef cl_uint cl_device_info;
+typedef cl_uint cl_platform_info;
+
+#define CL_SUCCESS 0
+#define CL_PLATFORM_NOT_FOUND_KHR -1001
+
+// Essential OpenCL functions that opencl-sys expects
+cl_int clGetPlatformIDs(cl_uint num_entries, cl_platform_id* platforms, cl_uint* num_platforms) {
+    if (num_platforms) *num_platforms = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetDeviceIDs(cl_platform_id platform, unsigned long device_type, cl_uint num_entries, cl_device_id* devices, cl_uint* num_devices) {
+    if (num_devices) *num_devices = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetDeviceInfo(cl_device_id device, cl_device_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clGetPlatformInfo(cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret) {
+    if (param_value_size_ret) *param_value_size_ret = 0;
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_context clCreateContext(const cl_uint* properties, cl_uint num_devices, const cl_device_id* devices, void* pfn_notify, void* user_data, cl_int* errcode_ret) {
+    if (errcode_ret) *errcode_ret = CL_PLATFORM_NOT_FOUND_KHR;
+    return 0;
+}
+
+cl_command_queue clCreateCommandQueue(cl_context context, cl_device_id device, cl_ulong properties, cl_int* errcode_ret) {
+    if (errcode_ret) *errcode_ret = CL_PLATFORM_NOT_FOUND_KHR;
+    return 0;
+}
+
+cl_mem clCreateBuffer(cl_context context, cl_ulong flags, size_t size, void* host_ptr, cl_int* errcode_ret) {
+    if (errcode_ret) *errcode_ret = CL_PLATFORM_NOT_FOUND_KHR;
+    return 0;
+}
+
+cl_program clCreateProgramWithSource(cl_context context, cl_uint count, const char** strings, const size_t* lengths, cl_int* errcode_ret) {
+    if (errcode_ret) *errcode_ret = CL_PLATFORM_NOT_FOUND_KHR;
+    return 0;
+}
+
+cl_int clBuildProgram(cl_program program, cl_uint num_devices, const cl_device_id* device_list, const char* options, void* pfn_notify, void* user_data) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_kernel clCreateKernel(cl_program program, const char* kernel_name, cl_int* errcode_ret) {
+    if (errcode_ret) *errcode_ret = CL_PLATFORM_NOT_FOUND_KHR;
+    return 0;
+}
+
+cl_int clSetKernelArg(cl_kernel kernel, cl_uint arg_index, size_t arg_size, const void* arg_value) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clEnqueueReadBuffer(cl_command_queue command_queue, cl_mem buffer, cl_uint blocking_read, size_t offset, size_t size, void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clEnqueueWriteBuffer(cl_command_queue command_queue, cl_mem buffer, cl_uint blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clFinish(cl_command_queue command_queue) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseKernel(cl_kernel kernel) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseProgram(cl_program program) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseMemObject(cl_mem memobj) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseCommandQueue(cl_command_queue command_queue) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseContext(cl_context context) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+
+cl_int clReleaseEvent(cl_event event) {
+    return CL_PLATFORM_NOT_FOUND_KHR;
+}
+"#;
+    
+    std::fs::write(&stub_c_file, stub_content)
+        .map_err(|e| format!("Failed to write OpenCL stub: {}", e))?;
+    
+    // Compile the stub into a static library
+    let stub_lib = out_path.join("libOpenCL.a");
+    let mut cc_cmd = std::process::Command::new("gcc");
+    cc_cmd.args(&["-c", stub_c_file.to_str().unwrap(), "-o", &format!("{}/opencl_stub.o", out_dir)]);
+    
+    let cc_output = cc_cmd.output()
+        .map_err(|e| format!("Failed to compile OpenCL stub: {}", e))?;
+    
+    if !cc_output.status.success() {
+        let stderr = String::from_utf8_lossy(&cc_output.stderr);
+        return Err(format!("gcc failed for OpenCL stub: {}", stderr));
+    }
+    
+    // Create static library
+    let mut ar_cmd = std::process::Command::new("ar");
+    ar_cmd.args(&["rcs", stub_lib.to_str().unwrap(), &format!("{}/opencl_stub.o", out_dir)]);
+    
+    let ar_output = ar_cmd.output()
+        .map_err(|e| format!("Failed to create OpenCL stub library: {}", e))?;
+    
+    if !ar_output.status.success() {
+        let stderr = String::from_utf8_lossy(&ar_output.stderr);
+        return Err(format!("ar failed for OpenCL stub: {}", stderr));
+    }
+    
+    // Tell cargo to use our stub library instead of system OpenCL
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:warning=Created stub OpenCL library to prevent linking failures");
+    
+    Ok(())
 }
