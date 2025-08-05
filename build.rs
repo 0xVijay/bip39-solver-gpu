@@ -87,26 +87,13 @@ fn main() {
             println!("cargo:rustc-cfg=opencl_available");
             println!("cargo:warning=OpenCL libraries found successfully");
             
-            // Only link OpenCL when actually available
-            println!("cargo:rustc-link-lib=OpenCL");
-            
-            // Add OpenCL library search paths
-            let opencl_lib_paths = [
-                "/usr/lib/x86_64-linux-gnu",
-                "/usr/lib",
-                "/usr/local/lib",
-                "/opt/intel/opencl/lib64",
-            ];
-            
-            for path in &opencl_lib_paths {
-                if std::path::Path::new(path).exists() {
-                    println!("cargo:rustc-link-search=native={}", path);
-                }
-            }
+            // Enable the opencl-runtime feature which pulls in opencl3 dependency
+            println!("cargo:rustc-cfg=feature=\"opencl-runtime\"");
         } else {
             println!("cargo:warning=OpenCL libraries not found. Install OpenCL drivers for GPU support.");
             println!("cargo:warning=Building without OpenCL support. GPU operations will not be available.");
-            // Explicitly do not link OpenCL when not available
+            
+            // Do not enable opencl-runtime feature, so opencl3 won't be linked
         }
     }
 }

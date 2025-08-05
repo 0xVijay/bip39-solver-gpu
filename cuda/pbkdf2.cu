@@ -1,11 +1,4 @@
 // CUDA kernel for PBKDF2-HMAC-SHA512 derivation
-#ifdef __cplusplus
-extern "C" {
-#endif
-__device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest);
-#ifdef __cplusplus
-}
-#endif
 // High-performance GPU implementation for mnemonic seed derivation
 
 #ifndef PBKDF2_CU
@@ -13,6 +6,14 @@ __device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest)
 
 #include <cuda_runtime.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+__device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest);
+#ifdef __cplusplus
+}
+#endif
 
 // Constants for PBKDF2
 #define PBKDF2_ITERATIONS 2048
