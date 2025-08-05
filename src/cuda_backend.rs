@@ -1,5 +1,4 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
-use crate::gpu_models::SUPPORTED_GPU_MODELS;
 // Removed unused import; will import locally where needed
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
@@ -665,7 +664,7 @@ impl CudaBackend {
     }
 
     /// Get device memory for a CUDA device
-    fn get_device_memory(&self, _device_id: u32) -> u64 {
+    fn get_device_memory(&self, device_id: u32) -> u64 {
         #[cfg(all(feature = "cuda", cuda_available))]
         {
             use std::mem;
@@ -921,7 +920,7 @@ impl GpuBackend for CudaBackend {
     }
 
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
-        // Use SUPPORTED_GPU_MODELS from top-level import
+        use crate::gpu_models::SUPPORTED_GPU_MODELS;
         println!("Enumerating CUDA devices...");
 
         let device_count = self.get_device_count()
