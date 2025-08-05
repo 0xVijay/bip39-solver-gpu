@@ -1,4 +1,5 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
+use crate::gpu_models::SUPPORTED_GPU_MODELS;
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use crate::eth::{derive_ethereum_address, addresses_equal};
