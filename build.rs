@@ -29,12 +29,12 @@ fn main() {
         // Check if CUDA toolkit is available before attempting compilation
         match find_nvcc() {
             Ok(_) => {
-                // Compile CUDA kernels
+                // Compile CUDA kernels - linking happens only if this succeeds
                 match compile_cuda_kernels(&cuda_sources) {
                     Ok(()) => {
                         println!("cargo:warning=CUDA kernels compiled successfully");
                         
-                        // Link CUDA libraries only if compilation succeeded
+                        // Link CUDA libraries only after successful compilation
                         println!("cargo:rustc-link-lib=cudart");
                         println!("cargo:rustc-link-lib=cuda");
                         
@@ -43,9 +43,22 @@ fn main() {
                             println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
                             println!("cargo:rustc-link-search=native={}/lib", cuda_path);
                         }
-                        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
-                        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
-                        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+                        
+                        // Common CUDA installation paths
+                        let cuda_lib_paths = [
+                            "/usr/local/cuda/lib64",
+                            "/usr/local/cuda/lib",
+                            "/usr/local/cuda-12/lib64",
+                            "/usr/local/cuda-11/lib64",
+                            "/opt/cuda/lib64",
+                            "/usr/lib/x86_64-linux-gnu",
+                        ];
+                        
+                        for path in &cuda_lib_paths {
+                            if std::path::Path::new(path).exists() {
+                                println!("cargo:rustc-link-search=native={}", path);
+                            }
+                        }
                         
                         // Set compile-time flag to indicate CUDA is available
                         println!("cargo:rustc-cfg=cuda_available");
@@ -53,7 +66,7 @@ fn main() {
                     Err(e) => {
                         println!("cargo:warning=CUDA kernel compilation failed: {}", e);
                         println!("cargo:warning=Building without CUDA support. GPU operations will not be available.");
-                        // No CUDA linking when compilation fails
+                        // Explicitly do not link CUDA libraries when compilation fails
                     }
                 }
             },
@@ -73,11 +86,28 @@ fn main() {
         if is_opencl_available() {
             println!("cargo:rustc-cfg=opencl_available");
             println!("cargo:warning=OpenCL libraries found successfully");
+            
+            // Only link OpenCL when actually available
+            println!("cargo:rustc-link-lib=OpenCL");
+            
+            // Add OpenCL library search paths
+            let opencl_lib_paths = [
+                "/usr/lib/x86_64-linux-gnu",
+                "/usr/lib",
+                "/usr/local/lib",
+                "/opt/intel/opencl/lib64",
+            ];
+            
+            for path in &opencl_lib_paths {
+                if std::path::Path::new(path).exists() {
+                    println!("cargo:rustc-link-search=native={}", path);
+                }
+            }
         } else {
             println!("cargo:warning=OpenCL libraries not found. Install OpenCL drivers for GPU support.");
             println!("cargo:warning=Building without OpenCL support. GPU operations will not be available.");
+            // Explicitly do not link OpenCL when not available
         }
-        // Note: Let opencl3 crate handle OpenCL linking automatically
     }
 }
 
@@ -88,64 +118,68 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     // Find nvcc compiler
     let nvcc = find_nvcc()?;
     
+    // Compile all CUDA sources together to resolve cross-file dependencies
+    let combined_object = out_path.join("cuda_kernels.o");
+    let combined_lib = out_path.join("libcuda_kernels.a");
+    
+    println!("cargo:warning=Compiling CUDA kernels together to resolve dependencies...");
     for source in sources {
-        let source_path = PathBuf::from(source);
-        let object_name = source_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| format!("Invalid source file: {}", source))?;
-        let object_path = out_path.join(format!("{}.o", object_name));
-        
-        println!("cargo:warning=Compiling CUDA kernel: {}", source);
-        
-        let output = std::process::Command::new(&nvcc)
-            .args(&[
-                "-c",
-                source,
-                "-o", object_path.to_str().unwrap(),
-                "--compiler-options", "-fPIC",
-                "-arch=sm_75",  // Modern GPU architecture (RTX 20XX+, V100+) - avoids deprecated warnings
-                "-O3",          // Optimize for performance
-                "--std=c++11",  // C++11 standard
-                "-Xptxas", "-O3", // PTX optimization
-                "-lineinfo",    // Debug info
-                "-Wno-deprecated-gpu-targets", // Suppress deprecated architecture warnings
-                "--disable-warnings", // Disable warnings being treated as errors
-            ])
-            .output()
-            .map_err(|e| format!("Failed to execute nvcc: {}", e))?;
-        
-        // Check if compilation succeeded (warnings are OK)
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            
-            // If it's just warnings, continue
-            if stderr.contains("warning") && !stderr.contains("error") {
-                println!("cargo:warning=CUDA compilation warnings in {}: {}", source, stderr);
-            } else {
-                return Err(format!("nvcc compilation failed for {}: {}{}", source, stderr, stdout));
-            }
-        }
-        
-        // Create a static library from the object file
-        let lib_name = format!("lib{}.a", object_name);
-        let lib_path = out_path.join(&lib_name);
-        
-        let ar_output = std::process::Command::new("ar")
-            .args(&["rcs", lib_path.to_str().unwrap(), object_path.to_str().unwrap()])
-            .output()
-            .map_err(|e| format!("Failed to create static library: {}", e))?;
-        
-        if !ar_output.status.success() {
-            let stderr = String::from_utf8_lossy(&ar_output.stderr);
-            return Err(format!("ar failed for {}: {}", object_name, stderr));
-        }
-        
-        // Tell cargo to link the static library
-        println!("cargo:rustc-link-search=native={}", out_dir);
-        println!("cargo:rustc-link-lib=static={}", object_name);
+        println!("cargo:warning=Including CUDA source: {}", source);
     }
+    
+    // Prepare nvcc command with all source files
+    let mut nvcc_cmd = std::process::Command::new(&nvcc);
+    nvcc_cmd.args(&[
+        "-c",
+        "-o", combined_object.to_str().unwrap(),
+        "--compiler-options", "-fPIC",
+        "-arch=sm_75",  // Modern GPU architecture (RTX 20XX+, V100+) - avoids deprecated warnings
+        "-O3",          // Optimize for performance
+        "--std=c++11",  // C++11 standard
+        "-Xptxas", "-O3", // PTX optimization
+        "-lineinfo",    // Debug info
+        "-Wno-deprecated-gpu-targets", // Suppress deprecated architecture warnings
+        "--disable-warnings", // Disable warnings being treated as errors
+    ]);
+    
+    // Add all source files to the command
+    for source in sources {
+        nvcc_cmd.arg(source);
+    }
+    
+    let output = nvcc_cmd
+        .output()
+        .map_err(|e| format!("Failed to execute nvcc: {}", e))?;
+    
+    // Check if compilation succeeded (warnings are OK)
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        
+        // If it's just warnings, continue
+        if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
+            println!("cargo:warning=CUDA compilation warnings: {}", stderr);
+        } else {
+            return Err(format!("nvcc compilation failed: {}{}", stderr, stdout));
+        }
+    } else {
+        println!("cargo:warning=CUDA kernels compiled successfully");
+    }
+    
+    // Create a static library from the combined object file
+    let ar_output = std::process::Command::new("ar")
+        .args(&["rcs", combined_lib.to_str().unwrap(), combined_object.to_str().unwrap()])
+        .output()
+        .map_err(|e| format!("Failed to create static library: {}", e))?;
+    
+    if !ar_output.status.success() {
+        let stderr = String::from_utf8_lossy(&ar_output.stderr);
+        return Err(format!("ar failed for cuda_kernels: {}", stderr));
+    }
+    
+    // Tell cargo to link the static library
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-lib=static=cuda_kernels");
     
     Ok(())
 }

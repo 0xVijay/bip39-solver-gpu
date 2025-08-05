@@ -133,9 +133,9 @@ __device__ void cuda_sha512(const uint8_t* message, size_t len, uint8_t* digest)
 /**
  * GPU-optimized HMAC-SHA512 implementation
  */
-__device__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
-                                 const uint8_t* message, size_t msg_len, 
-                                 uint8_t* digest) {
+extern "C" __device__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
+                                            const uint8_t* message, size_t msg_len, 
+                                            uint8_t* digest) {
     uint8_t ipad[SHA512_BLOCK_SIZE];
     uint8_t opad[SHA512_BLOCK_SIZE];
     uint8_t inner_digest[SHA512_DIGEST_SIZE];

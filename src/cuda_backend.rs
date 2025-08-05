@@ -124,7 +124,6 @@ impl CudaBackend {
 
     /// Complete GPU pipeline: Mnemonic → Address with target matching - only when CUDA is available
     #[cfg(all(feature = "cuda", cuda_available))]
-    #[allow(dead_code)]
     fn gpu_complete_pipeline_batch(
         &self,
         mnemonics: &[String],
