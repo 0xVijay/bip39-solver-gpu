@@ -247,6 +247,89 @@ impl CudaBackend {
             80,                      // Default compute units
         )
     }
+
+    /// Get comprehensive device information (tries CUDA API first, then nvidia-smi)
+    #[cfg(feature = "cuda")]
+    fn get_device_info(&self, device_id: i32) -> (String, u64, u32) {
+        // Try CUDA API first if kernels are compiled
+        #[cfg(cuda_available)]
+        {
+            use std::mem;
+            let mut properties: CudaDeviceProperties = unsafe { mem::zeroed() };
+            
+            unsafe {
+                if cuda_get_device_properties(&mut properties, device_id) == 0 {
+                    // Extract device name from C string
+                    let mut name_bytes = Vec::new();
+                    for &byte in properties.name.iter() {
+                        if byte == 0 { break; }
+                        name_bytes.push(byte);
+                    }
+                    
+                    let device_name = String::from_utf8(name_bytes)
+                        .unwrap_or_else(|_| format!("CUDA Device {}", device_id));
+                    
+                    let memory = properties.total_global_mem as u64;
+                    let compute_units = properties.multiprocessor_count as u32;
+                    
+                    return (device_name, memory, compute_units);
+                }
+            }
+        }
+        
+        // Fallback to nvidia-smi
+        self.get_device_info_via_nvidia_smi(device_id)
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    fn get_device_info(&self, device_id: i32) -> (String, u64, u32) {
+        (format!("CUDA Device {}", device_id), 8 * 1024 * 1024 * 1024, 80)
+    }
+
+    /// Estimate compute units (SMs) based on GPU name
+    fn estimate_compute_units(&self, gpu_name: &str) -> u32 {
+        let gpu_name_lower = gpu_name.to_lowercase();
+        
+        // RTX 40XX series (Ada Lovelace)
+        if gpu_name_lower.contains("rtx 4090") { return 128; }
+        if gpu_name_lower.contains("rtx 4080") { return 76; }
+        if gpu_name_lower.contains("rtx 4070") { return 46; }
+        if gpu_name_lower.contains("rtx 4060") { return 24; }
+        
+        // RTX 30XX series (Ampere)
+        if gpu_name_lower.contains("rtx 3090") { return 82; }
+        if gpu_name_lower.contains("rtx 3080") { return 68; }
+        if gpu_name_lower.contains("rtx 3070") { return 46; }
+        if gpu_name_lower.contains("rtx 3060 ti") { return 38; }
+        if gpu_name_lower.contains("rtx 3060") { return 28; }
+        
+        // RTX 20XX series (Turing)
+        if gpu_name_lower.contains("rtx 2080 ti") { return 68; }
+        if gpu_name_lower.contains("rtx 2080") { return 46; }
+        if gpu_name_lower.contains("rtx 2070") { return 36; }
+        if gpu_name_lower.contains("rtx 2060") { return 30; }
+        
+        // Tesla/Data Center cards
+        if gpu_name_lower.contains("v100") { return 80; }
+        if gpu_name_lower.contains("a100") { return 108; }
+        if gpu_name_lower.contains("a40") { return 84; }
+        if gpu_name_lower.contains("a30") { return 56; }
+        if gpu_name_lower.contains("a10") { return 36; }
+        if gpu_name_lower.contains("t4") { return 40; }
+        
+        // GTX 16XX series (Turing)
+        if gpu_name_lower.contains("gtx 1660") { return 22; }
+        if gpu_name_lower.contains("gtx 1650") { return 14; }
+        
+        // GTX 10XX series (Pascal)
+        if gpu_name_lower.contains("gtx 1080 ti") { return 28; }
+        if gpu_name_lower.contains("gtx 1080") { return 20; }
+        if gpu_name_lower.contains("gtx 1070") { return 15; }
+        if gpu_name_lower.contains("gtx 1060") { return 10; }
+        
+        // Default fallback
+        40
+    }
     
     /// Execute batch processing in fallback mode (CUDA runtime available but kernels not compiled)
     #[cfg(feature = "cuda")]
@@ -336,70 +419,6 @@ impl CudaBackend {
         })
     }
     
-    /// Estimate compute units based on GPU name
-    #[cfg(feature = "cuda")]
-    fn estimate_compute_units(&self, gpu_name: &str) -> u32 {
-        let name_lower = gpu_name.to_lowercase();
-        
-        // Common GPU families and their typical compute unit counts
-        if name_lower.contains("rtx 4090") { 128 }
-        else if name_lower.contains("rtx 4080") { 104 } 
-        else if name_lower.contains("rtx 4070") { 84 }
-        else if name_lower.contains("rtx 3090") { 82 }
-        else if name_lower.contains("rtx 3080") { 68 }
-        else if name_lower.contains("rtx 3070") { 46 }
-        else if name_lower.contains("rtx 3060") { 28 }
-        else if name_lower.contains("v100") { 80 }
-        else if name_lower.contains("a100") { 108 }
-        else if name_lower.contains("h100") { 144 }
-        else if name_lower.contains("t4") { 40 }
-        else if name_lower.contains("k80") { 26 }
-        else if name_lower.contains("p100") { 56 }
-        else { 80 } // Default estimate
-    }
-    
-    /// Get device info for a specific device ID
-    #[cfg(feature = "cuda")]
-    fn get_device_info_for_id(&self, device_id: i32) -> (String, u64, u32) {
-        // Try to get properties via CUDA API if compiled with kernels
-        #[cfg(cuda_available)]
-        {
-            let mut properties = CudaDeviceProperties {
-                name: [0; 256],
-                total_global_mem: 0,
-                multiprocessor_count: 0,
-                max_threads_per_block: 0,
-            };
-
-            let result = unsafe { cuda_get_device_properties(&mut properties, device_id) };
-            
-            if result == 0 {
-                // Extract device name from C-string
-                let name_end = properties.name.iter().position(|&c| c == 0).unwrap_or(255);
-                let device_name = String::from_utf8_lossy(&properties.name[..name_end]).to_string();
-                
-                return (
-                    device_name,
-                    properties.total_global_mem as u64,
-                    properties.multiprocessor_count as u32,
-                );
-            }
-        }
-        
-        // Fallback to nvidia-smi for VastAI/Docker environments or if CUDA API fails
-        self.get_device_info_via_nvidia_smi(device_id)
-    }
-    
-    #[cfg(not(feature = "cuda"))]
-    fn get_device_info_for_id(&self, device_id: i32) -> (String, u64, u32) {
-        (
-            format!("CUDA Device {}", device_id),
-            8 * 1024 * 1024 * 1024, // 8GB default
-            80,                      // Default compute units
-        )
-    }
-
-    /// Complete GPU pipeline: Mnemonic → Address with target matching - only when CUDA is available
     #[cfg(all(feature = "cuda", cuda_available))]
     fn gpu_complete_pipeline_batch(
         &self,
@@ -539,71 +558,151 @@ impl CudaBackend {
             });
         }
 
-        // Perform health check before execution
+        // Perform comprehensive health check before execution
         if let Err(error) = self.check_device_health(device_id) {
             self.mark_device_failed(device_id, error.clone());
             return Err(error);
         }
 
-        // Estimate memory requirements
-        #[cfg(feature = "cuda")]
-        let estimated_memory = {
-            use crate::error_handling::cuda_errors::estimate_memory_for_batch;
-            estimate_memory_for_batch(batch_size)
-        };
-        #[cfg(not(feature = "cuda"))]
-        let estimated_memory = (batch_size as usize).saturating_mul(230);
+        // Validate batch size to prevent memory issues
+        let max_safe_batch_size = self.calculate_max_safe_batch_size(device_id);
+        let actual_batch_size = batch_size.min(max_safe_batch_size);
+        
+        if actual_batch_size != batch_size {
+            println!("Warning: Reducing batch size from {} to {} for device {} to prevent memory overflow", 
+                     batch_size, actual_batch_size, device_id);
+        }
 
-        // Check available memory (simplified check)
-        if estimated_memory > 8 * 1024 * 1024 * 1024 { // 8GB limit
+        // Estimate memory requirements with safety margin
+        let estimated_memory = self.estimate_memory_for_batch(actual_batch_size);
+        let available_memory = self.get_device_memory(device_id);
+        
+        if estimated_memory > (available_memory * 80 / 100) { // Use only 80% of available memory
             let error = GpuError::OutOfMemory {
                 device_id,
-                batch_size,
-                available_memory: 8 * 1024 * 1024 * 1024,
+                batch_size: actual_batch_size,
+                available_memory,
                 timestamp: current_timestamp(),
             };
             self.error_logger.log_error(&error);
             return Err(error);
         }
 
-        // Execute the actual batch processing
-        let result = self.execute_batch_internal(
-            device_id, start_offset, batch_size, target_address, derivation_path, passphrase
-        );
-
-        let duration = start_time.elapsed().as_millis() as u64;
-        
-        match &result {
-            Ok(_) => {
-                // Update device status on success
-                if let Ok(mut status_vec) = self.device_status.lock() {
-                    if let Some(status) = status_vec.iter_mut().find(|s| s.device_id == device_id) {
-                        status.increment_batch_count();
-                        status.mark_healthy();
+        // Execute with retry mechanism
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match self.execute_batch_internal(
+                device_id, start_offset, actual_batch_size, target_address, derivation_path, passphrase
+            ) {
+                Ok(result) => {
+                    let duration = start_time.elapsed().as_millis() as u64;
+                    
+                    // Update device status on success
+                    if let Ok(mut status_vec) = self.device_status.lock() {
+                        if let Some(status) = status_vec.iter_mut().find(|s| s.device_id == device_id) {
+                            status.increment_batch_count();
+                            status.mark_healthy();
+                        }
+                    }
+                    self.error_logger.log_batch_result(device_id, actual_batch_size, true, duration);
+                    return Ok(result);
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    println!("Device {} batch attempt {} failed, retrying...", device_id, attempt);
+                    
+                    // Wait a bit before retry
+                    std::thread::sleep(std::time::Duration::from_millis(100 * attempt));
+                    
+                    // Reset device before retry
+                    #[cfg(feature = "cuda")]
+                    {
+                        use crate::error_handling::cuda_errors::reset_device;
+                        if let Err(reset_error) = reset_device(device_id) {
+                            println!("Warning: Failed to reset device {} before retry: {:?}", device_id, reset_error);
+                        }
                     }
                 }
-                self.error_logger.log_batch_result(device_id, batch_size, true, duration);
-            }
-            Err(error) => {
-                self.error_logger.log_batch_result(device_id, batch_size, false, duration);
-                
-                // Convert generic error to GpuError for proper handling
-                let gpu_error = GpuError::KernelExecutionFailed {
-                    device_id,
-                    kernel_name: "batch_execution".to_string(),
-                    error: error.to_string(),
-                    timestamp: current_timestamp(),
-                };
-                self.mark_device_failed(device_id, gpu_error);
             }
         }
 
-        result.map_err(|e| GpuError::KernelExecutionFailed {
-            device_id,
-            kernel_name: "batch_execution".to_string(),
-            error: e.to_string(),
-            timestamp: current_timestamp(),
-        })
+        let duration = start_time.elapsed().as_millis() as u64;
+        self.error_logger.log_batch_result(device_id, actual_batch_size, false, duration);
+        
+        // Convert the last error to GpuError for proper handling
+        let gpu_error = if let Some(error) = last_error {
+            GpuError::KernelExecutionFailed {
+                device_id,
+                kernel_name: "batch_execution".to_string(),
+                error: error.to_string(),
+                timestamp: current_timestamp(),
+            }
+        } else {
+            GpuError::DeviceHardwareFailure {
+                device_id,
+                device_name: format!("CUDA Device {}", device_id),
+                error_code: -1,
+                timestamp: current_timestamp(),
+            }
+        };
+        
+        self.mark_device_failed(device_id, gpu_error.clone());
+        Err(gpu_error)
+    }
+
+    /// Calculate maximum safe batch size for device
+    fn calculate_max_safe_batch_size(&self, device_id: u32) -> u128 {
+        let available_memory = self.get_device_memory(device_id);
+        let memory_per_item = 512; // Estimated memory per mnemonic processing (conservative)
+        let safety_factor = 0.7; // Use only 70% of available memory for safety
+        
+        ((available_memory as f64 * safety_factor) / memory_per_item as f64) as u128
+    }
+
+    /// Estimate memory requirements for batch
+    fn estimate_memory_for_batch(&self, batch_size: u128) -> u64 {
+        let base_memory_per_item = 512; // Base memory per item (strings, intermediate results)
+        let additional_overhead = batch_size as u64 * 64; // Additional GPU kernel overhead
+        
+        (batch_size as u64 * base_memory_per_item) + additional_overhead + (100 * 1024 * 1024) // 100MB overhead
+    }
+
+    /// Get device memory for a CUDA device
+    fn get_device_memory(&self, device_id: u32) -> u64 {
+        #[cfg(all(feature = "cuda", cuda_available))]
+        {
+            use std::mem;
+            let mut properties: CudaDeviceProperties = unsafe { mem::zeroed() };
+            unsafe {
+                if cuda_get_device_properties(&mut properties, device_id as i32) == 0 {
+                    return properties.total_global_mem as u64;
+                }
+            }
+        }
+        
+        // Fallback: get via nvidia-smi
+        #[cfg(feature = "cuda")]
+        {
+            if let Ok(output) = std::process::Command::new("nvidia-smi")
+                .args(&[
+                    "--query-gpu=memory.total", 
+                    "--format=csv,noheader,nounits",
+                    &format!("--id={}", device_id)
+                ])
+                .output() 
+            {
+                if output.status.success() {
+                    if let Ok(memory_str) = String::from_utf8(output.stdout) {
+                        if let Ok(memory_mb) = memory_str.trim().parse::<u64>() {
+                            return memory_mb * 1024 * 1024; // Convert MB to bytes
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Conservative fallback
+        8 * 1024 * 1024 * 1024 // 8GB
     }
 
     /// Internal batch execution with GPU-optimized processing
@@ -771,10 +870,12 @@ impl GpuBackend for CudaBackend {
             Ok(count) if count > 0 => {
                 println!("Found {} CUDA device(s)", count);
                 
-                // Initialize device status tracking
+                // Initialize device status tracking with real device names
                 let mut status_vec = Vec::new();
                 for i in 0..count {
-                    let device_name = format!("CUDA Device {}", i);
+                    let (device_name, memory, compute_units) = self.get_device_info(i);
+                    println!("  Device {}: {} ({} MB memory, {} compute units)", 
+                             i, device_name, memory / (1024 * 1024), compute_units);
                     let status = DeviceStatus::new(i as u32, device_name);
                     status_vec.push(status);
                 }
@@ -832,7 +933,7 @@ impl GpuBackend for CudaBackend {
 
         for i in 0..device_count {
             let (device_name, memory, compute_units) = 
-                self.get_device_info_for_id(i);
+                self.get_device_info(i);
 
             devices.push(GpuDevice {
                 id: i as u32,

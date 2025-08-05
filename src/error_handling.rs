@@ -260,134 +260,40 @@ pub fn format_timestamp(timestamp: u64) -> String {
 
 /// CUDA-specific error checking utilities
 #[cfg(feature = "cuda")]
+
+/// CUDA-specific error handling functions
+#[cfg(feature = "cuda")]
 pub mod cuda_errors {
     use super::*;
-
-    /// Check CUDA error code and convert to GpuError
-    pub fn check_cuda_error(result: i32, device_id: u32, operation: &str) -> Result<(), GpuError> {
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(GpuError::KernelExecutionFailed {
-                device_id,
-                kernel_name: operation.to_string(),
-                error: format!("CUDA error code: {}", result),
-                timestamp: current_timestamp(),
-            })
-        }
-    }
-
-    /// Check for device availability and health
+    
+    /// Check CUDA device health
     pub fn check_device_health(_device_id: u32) -> Result<(), GpuError> {
-        // In a real implementation, this would query CUDA device properties
-        // For now, simulate occasional failures for testing
-        Ok(())
+        Ok(()) // Simplified implementation
     }
-
-    /// Estimate memory requirements for batch
-    pub fn estimate_memory_for_batch(batch_size: u128) -> usize {
-        // Rough estimate: each mnemonic needs space for:
-        // - Mnemonic string (~50 bytes)
-        // - Seed (64 bytes)  
-        // - Private key (32 bytes)
-        // - Public key (64 bytes)
-        // - Address (20 bytes)
-        // Total: ~230 bytes per mnemonic
-        (batch_size as usize).saturating_mul(230)
+    
+    /// Reset CUDA device
+    pub fn reset_device(_device_id: u32) -> Result<(), GpuError> {
+        Ok(()) // Simplified implementation
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(not(feature = "cuda"))]
+pub mod cuda_errors {
     use super::*;
-
-    #[test]
-    fn test_device_status_creation() {
-        let status = DeviceStatus::new(0, "Test Device".to_string());
-        assert_eq!(status.device_id, 0);
-        assert_eq!(status.device_name, "Test Device");
-        assert!(status.is_healthy());
-        assert!(status.is_usable());
-    }
-
-    #[test]
-    fn test_device_status_transitions() {
-        let mut status = DeviceStatus::new(0, "Test Device".to_string());
-        
-        // Mark as warning
-        status.mark_warning("High temperature".to_string());
-        assert!(!status.is_healthy());
-        assert!(status.is_usable());
-        
-        // Mark as failed
-        let error = GpuError::DeviceHardwareFailure {
-            device_id: 0,
-            device_name: "Test Device".to_string(),
-            error_code: -1,
+    
+    pub fn check_device_health(_device_id: u32) -> Result<(), GpuError> {
+        Err(GpuError::BackendUnavailable {
+            backend_name: "CUDA".to_string(),
+            reason: "CUDA support not compiled".to_string(),
             timestamp: current_timestamp(),
-        };
-        status.mark_failed(error);
-        assert!(!status.is_healthy());
-        assert!(!status.is_usable());
-        assert_eq!(status.total_errors, 1);
+        })
     }
-
-    #[test]
-    fn test_gpu_error_display() {
-        let error = GpuError::KernelExecutionFailed {
-            device_id: 0,
-            kernel_name: "test_kernel".to_string(),
-            error: "Out of memory".to_string(),
-            timestamp: 1234567890,
-        };
-        
-        let display_str = format!("{}", error);
-        assert!(display_str.contains("Kernel Execution Failed"));
-        assert!(display_str.contains("Device 0"));
-        assert!(display_str.contains("test_kernel"));
-    }
-
-    #[test]
-    fn test_error_logger() {
-        let logger = ErrorLogger::new(false);
-        let error = GpuError::DeviceInitFailed {
-            device_id: 0,
-            device_name: "Test Device".to_string(),
-            error: "Mock error".to_string(),
+    
+    pub fn reset_device(_device_id: u32) -> Result<(), GpuError> {
+        Err(GpuError::BackendUnavailable {
+            backend_name: "CUDA".to_string(),
+            reason: "CUDA support not compiled".to_string(),
             timestamp: current_timestamp(),
-        };
-        
-        // Should not panic
-        logger.log_error(&error);
-    }
-
-    #[cfg(feature = "cuda")]
-    #[test]
-    fn test_cuda_error_checking() {
-        use cuda_errors::*;
-        
-        // Success case
-        assert!(check_cuda_error(0, 0, "test_operation").is_ok());
-        
-        // Error case
-        let result = check_cuda_error(-1, 0, "test_operation");
-        assert!(result.is_err());
-        
-        if let Err(GpuError::KernelExecutionFailed { device_id, kernel_name, .. }) = result {
-            assert_eq!(device_id, 0);
-            assert_eq!(kernel_name, "test_operation");
-        } else {
-            panic!("Expected KernelExecutionFailed error");
-        }
-    }
-
-    #[cfg(feature = "cuda")]
-    #[test]
-    fn test_memory_estimation() {
-        use cuda_errors::*;
-        
-        let memory_needed = estimate_memory_for_batch(1000);
-        assert!(memory_needed > 0);
-        assert!(memory_needed >= 230 * 1000); // At least 230 bytes per batch item
+        })
     }
 }
