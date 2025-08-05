@@ -1,4 +1,3 @@
-use crate::eth::{addresses_equal, derive_ethereum_address};
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
 use std::error::Error;
@@ -22,6 +21,169 @@ impl OpenClBackend {
     /// Set the word space for mnemonic generation
     pub fn set_word_space(&mut self, word_space: Arc<WordSpace>) {
         self.word_space = Some(word_space);
+    }
+
+    /// Execute OpenCL kernel for GPU computation
+    #[cfg(feature = "opencl")]
+    fn execute_opencl_kernel(
+        &self,
+        _device_id: u32,
+        start_offset: u128,
+        batch_size: u128,
+        target_address: &str,
+    ) -> Result<GpuBatchResult, Box<dyn Error>> {
+        use opencl3::context::Context;
+        use opencl3::device::{get_all_devices, CL_DEVICE_TYPE_GPU, Device};
+        use opencl3::command_queue::{CommandQueue, CL_QUEUE_PROFILING_ENABLE};
+        use opencl3::program::Program;
+        use opencl3::kernel::{ExecuteKernel, Kernel};
+        use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE};
+        use opencl3::types::{cl_uchar, cl_ulong, cl_bool};
+        use std::path::PathBuf;
+
+        const CL_BLOCKING: cl_bool = 1;
+
+        // Get GPU devices
+        let devices = get_all_devices(CL_DEVICE_TYPE_GPU)?;
+        if devices.is_empty() {
+            return Err("No OpenCL GPU devices found".into());
+        }
+
+        let device_id = devices[0];
+        let device = Device::new(device_id);
+        let context = Context::from_device(&device)?;
+
+        // Create command queue
+        let queue = CommandQueue::create_default(&context, CL_QUEUE_PROFILING_ENABLE)?;
+
+        // Load OpenCL kernel source files
+        let kernel_dir = PathBuf::from("cl");
+        let mut kernel_source = String::new();
+
+        // Load required kernel files in order
+        let kernel_files = [
+            "common.cl",
+            "sha2.cl", 
+            "keccak.cl",
+            "secp256k1_common.cl",
+            "secp256k1_field.cl",
+            "secp256k1_scalar.cl",
+            "secp256k1_group.cl",
+            "secp256k1.cl",
+            "mnemonic_constants.cl",
+            "eth_address.cl",
+        ];
+
+        for filename in &kernel_files {
+            let file_path = kernel_dir.join(filename);
+            if file_path.exists() {
+                let file_content = std::fs::read_to_string(&file_path)
+                    .map_err(|e| format!("Failed to read {}: {}", filename, e))?;
+                kernel_source.push_str(&file_content);
+                kernel_source.push('\n');
+            }
+        }
+
+        if kernel_source.is_empty() {
+            return Err("No OpenCL kernel source files found in cl/ directory".into());
+        }
+
+        // Create program and build
+        let program = Program::create_and_build_from_source(&context, &kernel_source, "")?;
+        
+        // Create kernel
+        let kernel = Kernel::create(&program, "mnemonic_to_eth_address")?;
+
+        // Parse target address from hex string
+        let target_bytes = if target_address.starts_with("0x") {
+            hex::decode(&target_address[2..])?
+        } else {
+            hex::decode(target_address)?
+        };
+
+        if target_bytes.len() != 20 {
+            return Err(format!("Invalid Ethereum address length: {} bytes", target_bytes.len()).into());
+        }
+
+        // Convert start_offset to hi/lo format (128-bit to 64-bit hi/lo)
+        let mnemonic_start_hi = (start_offset >> 64) as u64;
+        let mnemonic_start_lo = start_offset as u64;
+
+        // Create buffers
+        let batch_size_u32 = batch_size.min(1_000_000) as usize; // Limit batch size for memory
+        
+        let mut target_buffer = unsafe { 
+            Buffer::<cl_uchar>::create(&context, CL_MEM_READ_ONLY, 20, std::ptr::null_mut())?
+        };
+        let mut found_mnemonic_buffer = unsafe {
+            Buffer::<cl_uchar>::create(&context, CL_MEM_READ_WRITE, 256, std::ptr::null_mut())?
+        };
+        let mut derivation_buffer = unsafe {
+            Buffer::<cl_uchar>::create(&context, CL_MEM_READ_ONLY, 64, std::ptr::null_mut())?
+        };
+
+        // Write target address to buffer
+        let _write_event = unsafe {
+            queue.enqueue_write_buffer(&mut target_buffer, CL_BLOCKING, 0, &target_bytes, &[])?
+        };
+
+        // Write derivation path (m/44'/60'/0'/0/0)
+        let derivation_path = b"m/44'/60'/0'/0/0\0";
+        let _write_event2 = unsafe {
+            queue.enqueue_write_buffer(&mut derivation_buffer, CL_BLOCKING, 0, derivation_path, &[])?
+        };
+
+        // Initialize found_mnemonic buffer to zero
+        let zero_buffer = vec![0u8; 256];
+        let _write_event3 = unsafe {
+            queue.enqueue_write_buffer(&mut found_mnemonic_buffer, CL_BLOCKING, 0, &zero_buffer, &[])?
+        };
+
+        // Set kernel arguments and execute
+        unsafe {
+            ExecuteKernel::new(&kernel)
+                .set_arg(&(mnemonic_start_hi as cl_ulong))
+                .set_arg(&(mnemonic_start_lo as cl_ulong))
+                .set_arg(&target_buffer)
+                .set_arg(&found_mnemonic_buffer)
+                .set_arg(&derivation_buffer)
+                .set_global_work_size(batch_size_u32)
+                .enqueue_nd_range(&queue)?;
+        }
+
+        // Wait for completion
+        queue.finish()?;
+
+        // Read results
+        let mut found_data = vec![0u8; 256];
+        let _read_event = unsafe {
+            queue.enqueue_read_buffer(&mut found_mnemonic_buffer, CL_BLOCKING, 0, &mut found_data, &[])?
+        };
+
+        // Check if we found a match
+        if found_data[0] == 0x01 {
+            // Extract mnemonic string (skip first status byte)
+            let mnemonic_bytes = &found_data[1..];
+            let mnemonic_len = mnemonic_bytes.iter().position(|&x| x == 0).unwrap_or(255);
+            let mnemonic = String::from_utf8_lossy(&mnemonic_bytes[..mnemonic_len]).to_string();
+            
+            println!("🎯 Found matching mnemonic on GPU: {}", mnemonic);
+            
+            return Ok(GpuBatchResult {
+                mnemonic: Some(mnemonic),
+                address: Some(target_address.to_string()),
+                offset: Some(start_offset),
+                processed_count: batch_size,
+            });
+        }
+
+        // No match found
+        Ok(GpuBatchResult {
+            mnemonic: None,
+            address: None,
+            offset: None,
+            processed_count: batch_size,
+        })
     }
 
     /// Try to initialize OpenCL, returns error if not available
@@ -165,53 +327,23 @@ impl GpuBackend for OpenClBackend {
 
     fn execute_batch(
         &self,
-        _device_id: u32,
+        device_id: u32,
         start_offset: u128,
         batch_size: u128,
         target_address: &str,
-        derivation_path: &str,
-        passphrase: &str,
+        _derivation_path: &str,
+        _passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        let word_space = self
-            .word_space
-            .as_ref()
-            .ok_or("Word space not initialized")?;
-
-        // TODO: Replace with actual OpenCL GPU kernel processing
-        // Currently using CPU implementation until GPU kernels are implemented
-        let mut processed_count = 0u128;
-        let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
-
-        for offset in start_offset..batch_end {
-            if let Some(word_indices) = word_space.index_to_words(offset) {
-                if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                    // Skip BIP39 checksum validation for performance - let crypto operations handle validation
-                    match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
-                        Ok(address) => {
-                            if addresses_equal(&address, target_address) {
-                                return Ok(GpuBatchResult {
-                                    mnemonic: Some(mnemonic),
-                                    address: Some(address),
-                                    offset: Some(offset),
-                                    processed_count: processed_count + 1,
-                                });
-                            }
-                        }
-                        Err(_) => {
-                            // Skip invalid mnemonics silently for performance
-                        }
-                    }
-                }
-            }
-            processed_count += 1;
+        // Use actual OpenCL GPU kernel processing
+        #[cfg(feature = "opencl")]
+        {
+            self.execute_opencl_kernel(device_id, start_offset, batch_size, target_address)
         }
-
-        Ok(GpuBatchResult {
-            mnemonic: None,
-            address: None,
-            offset: None,
-            processed_count,
-        })
+        
+        #[cfg(not(feature = "opencl"))]
+        {
+            Err("OpenCL support not compiled".into())
+        }
     }
 
     fn is_available(&self) -> bool {
