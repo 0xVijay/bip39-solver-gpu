@@ -12,7 +12,7 @@
 // Include kernels from other modules
 extern "C" {
     // From pbkdf2.cu
-    __device__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
+    __device__ __inline__ void cuda_hmac_sha512(const uint8_t* key, size_t key_len, 
                                      const uint8_t* message, size_t msg_len, 
                                      uint8_t* digest);
     

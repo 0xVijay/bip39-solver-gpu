@@ -1,5 +1,5 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
-use crate::gpu_models::SUPPORTED_GPU_MODELS;
+use bip39_solver_gpu::gpu_models::SUPPORTED_GPU_MODELS;
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
 use crate::eth::{derive_ethereum_address, addresses_equal};
@@ -60,11 +60,6 @@ unsafe fn cuda_get_device_properties(prop: *mut CudaDeviceProperties, device: i3
 #[cfg(not(all(feature = "cuda", cuda_available)))]
 #[allow(dead_code)]
 unsafe fn cuda_get_device_count(_count: *mut i32) -> i32 {
-    -1
-}
-
-#[cfg(not(all(feature = "cuda", cuda_available)))]
-unsafe fn cuda_get_device_properties(_prop: *mut CudaDeviceProperties, _device: i32) -> i32 {
     -1
 }
 
@@ -932,7 +927,7 @@ impl GpuBackend for CudaBackend {
 
         let mut devices = Vec::new();
 
-        use crate::gpu_models::SUPPORTED_GPU_MODELS;
+        use bip39_solver_gpu::gpu_models::SUPPORTED_GPU_MODELS;
         for i in 0..device_count {
             let (device_name, memory, compute_units) = self.get_device_info(i);
             // Try to match against known models
