@@ -143,7 +143,8 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
             "-O3", 
             "-lineinfo", 
             "-Wno-deprecated-gpu-targets", 
-            "--disable-warnings"
+            "--disable-warnings",
+            "-rdc=true"  // Enable relocatable device code for cross-file device function calls
         ]);
         
         for arch in &gpu_architectures {
@@ -167,6 +168,37 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     
     // Archive all object files into a static library
     let combined_lib = out_path.join("libcuda_kernels.a");
+    
+    // When using relocatable device code, we need to device-link the objects first
+    if !object_files.is_empty() {
+        let device_linked_obj = out_path.join("device_linked.o");
+        let mut nvlink_cmd = std::process::Command::new(&nvcc);
+        nvlink_cmd.args(&["-dlink"]);
+        
+        // Add all object files to device linking
+        for obj in &object_files {
+            nvlink_cmd.arg(obj.to_str().unwrap());
+        }
+        
+        // Add GPU architectures for device linking
+        for arch in &gpu_architectures {
+            nvlink_cmd.arg(&format!("-arch={}", arch));
+        }
+        
+        nvlink_cmd.args(&["-o", device_linked_obj.to_str().unwrap()]);
+        
+        let nvlink_output = nvlink_cmd.output()
+            .map_err(|e| format!("Failed to device-link CUDA objects: {}", e))?;
+        
+        if !nvlink_output.status.success() {
+            let stderr = String::from_utf8_lossy(&nvlink_output.stderr);
+            return Err(format!("nvcc device linking failed: {}", stderr));
+        }
+        
+        // Add the device-linked object to our object files
+        object_files.push(device_linked_obj);
+    }
+    
     let mut ar_cmd = std::process::Command::new("ar");
     ar_cmd.arg("rcs").arg(combined_lib.to_str().unwrap());
     for obj in &object_files {
