@@ -164,26 +164,37 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
             
         // Filter out include guards and duplicate includes
         let mut filtered_content = String::new();
-        let mut in_include_guard = false;
-        let mut skip_until_endif = 0;
+        let mut include_guard_depth = 0;
+        let mut current_include_guard = String::new();
         
         for line in source_content.lines() {
             let trimmed = line.trim();
             
-            // Skip include guards
+            // Track include guards properly - skip only the outer include guard
             if trimmed.starts_with("#ifndef") && (trimmed.contains("_CU") || trimmed.contains("_CUH")) {
-                in_include_guard = true;
-                continue;
-            }
-            if trimmed.starts_with("#define") && in_include_guard {
-                in_include_guard = false;
-                continue;
-            }
-            if trimmed == "#endif" && (skip_until_endif > 0 || line.contains("// ") || source_content.matches("#ifndef").count() == source_content.matches("#endif").count()) {
-                if skip_until_endif > 0 {
-                    skip_until_endif -= 1;
+                if include_guard_depth == 0 {
+                    // This is the main include guard for this file - skip it
+                    current_include_guard = trimmed.replace("#ifndef ", "").trim().to_string();
+                    include_guard_depth += 1;
+                    continue;
                 }
+            }
+            
+            if trimmed.starts_with("#define") && include_guard_depth == 1 && 
+               trimmed.contains(&current_include_guard) {
+                // This is the define for the main include guard - skip it
                 continue;
+            }
+            
+            if trimmed.starts_with("#endif") && include_guard_depth > 0 {
+                // Check if this is the closing of the main include guard
+                if line.contains(&current_include_guard) || 
+                   (include_guard_depth == 1 && (trimmed == "#endif" || line.contains("//") && line.contains(&current_include_guard))) {
+                    include_guard_depth -= 1;
+                    if include_guard_depth == 0 {
+                        continue; // Skip the main include guard's endif
+                    }
+                }
             }
             
             // Skip duplicate includes that we've already added

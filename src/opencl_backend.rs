@@ -54,7 +54,10 @@ impl OpenClBackend {
         let context = Context::from_device(&device)?;
 
         // Create command queue (using newer API)
-        let queue = unsafe { CommandQueue::create(&context, device_id, 0)? };
+        let queue = unsafe { 
+            #[allow(deprecated)]
+            CommandQueue::create(&context, device_id, 0)? 
+        };
 
         // Load OpenCL kernel source files
         let kernel_dir = PathBuf::from("cl");
