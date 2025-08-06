@@ -703,6 +703,22 @@ fn setup_cuda_linking() {
     // Link CUDA libraries in the correct order for relocatable device code
     // Order is critical: device runtime first, then runtime, then driver
     link_cuda_libraries();
+    
+    // Add linker flags that might help with CUDA linking issues
+    add_cuda_linker_flags();
+}
+
+fn add_cuda_linker_flags() {
+    // Add linker flags that can help with CUDA library resolution
+    println!("cargo:rustc-link-arg=-Wl,--allow-shlib-undefined");
+    println!("cargo:rustc-link-arg=-Wl,--as-needed");
+    
+    // Ensure we search for shared libraries in runtime paths
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/cuda/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/nvidia/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/x86_64-linux-gnu");
+    
+    println!("cargo:warning=Added CUDA-specific linker flags");
 }
 
 fn setup_cuda_library_paths() {
@@ -742,9 +758,16 @@ fn setup_cuda_library_paths() {
         "/usr/local/nvidia/lib",
         "/usr/local/cuda-toolkit/lib64",
         "/usr/local/cuda-toolkit/lib",
-        // Additional common paths
+        // Additional common paths for various CUDA distributions
         "/usr/lib/cuda/lib64",
         "/usr/lib/cuda/lib",
+        "/usr/share/cuda/lib64",
+        "/usr/share/cuda/lib",
+        // Additional VastAI specific paths
+        "/usr/local/cuda-toolkit-12/lib64",
+        "/usr/local/cuda-toolkit-11/lib64",
+        "/workspace/cuda/lib64",
+        "/workspace/cuda/lib",
     ];
     
     for path in &cuda_lib_paths {
@@ -776,6 +799,9 @@ fn setup_cuda_library_paths() {
 fn add_cuda_lib_path(path: &str) {
     if std::path::Path::new(path).exists() {
         println!("cargo:rustc-link-search=native={}", path);
+        println!("cargo:warning=Added CUDA library search path: {}", path);
+    } else {
+        println!("cargo:warning=CUDA library path does not exist: {}", path);
     }
 }
 
@@ -786,32 +812,58 @@ fn link_cuda_libraries() {
     // First, try to determine which CUDA libraries are actually available
     let available_libs = detect_available_cuda_libraries();
     
+    if available_libs.is_empty() {
+        println!("cargo:warning=No CUDA libraries detected - attempting fallback linking");
+        
+        // Fallback linking strategy for environments where detection fails
+        // but libraries might still be available through system paths
+        println!("cargo:rustc-link-lib=cudadevrt");
+        println!("cargo:rustc-link-lib=cudart");
+        println!("cargo:rustc-link-lib=cuda");
+        
+        // Add comprehensive system dependencies
+        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=m");
+        println!("cargo:rustc-link-lib=dl");
+        println!("cargo:rustc-link-lib=rt");
+        println!("cargo:rustc-link-lib=pthread");
+        return;
+    }
+    
     // Link libraries in the correct order for relocatable device code
     // 1. CUDA device runtime (required for -rdc=true)
     if available_libs.contains(&"cudadevrt".to_string()) {
         println!("cargo:rustc-link-lib=cudadevrt");
+        println!("cargo:warning=Linking cudadevrt for relocatable device code");
     } else {
-        println!("cargo:warning=libcudadevrt not found - relocatable device code may not link properly");
+        println!("cargo:warning=libcudadevrt not found - trying fallback linking");
+        // Still try to link it in case it's available but not detected
+        println!("cargo:rustc-link-lib=cudadevrt");
     }
     
-    // 2. CUDA runtime
+    // 2. CUDA runtime - prefer dynamic over static for better compatibility
     if available_libs.contains(&"cudart".to_string()) {
         println!("cargo:rustc-link-lib=cudart");
+        println!("cargo:warning=Linking dynamic CUDA runtime");
     } else if available_libs.contains(&"cudart_static".to_string()) {
         println!("cargo:rustc-link-lib=static=cudart_static");
+        println!("cargo:warning=Linking static CUDA runtime");
         // Static runtime requires additional system libraries
         println!("cargo:rustc-link-lib=dl");
         println!("cargo:rustc-link-lib=rt");
         println!("cargo:rustc-link-lib=pthread");
     } else {
-        println!("cargo:warning=No CUDA runtime library found");
+        println!("cargo:warning=No CUDA runtime library found - trying fallback");
+        println!("cargo:rustc-link-lib=cudart");
     }
     
     // 3. CUDA driver API
     if available_libs.contains(&"cuda".to_string()) {
         println!("cargo:rustc-link-lib=cuda");
+        println!("cargo:warning=Linking CUDA driver library");
     } else {
-        println!("cargo:warning=libcuda not found");
+        println!("cargo:warning=libcuda not found - trying fallback");
+        println!("cargo:rustc-link-lib=cuda");
     }
     
     // Additional libraries that might be needed for some CUDA operations
@@ -819,9 +871,17 @@ fn link_cuda_libraries() {
         println!("cargo:rustc-link-lib=nvrtc");
     }
     
-    // System libraries that CUDA might depend on
+    // System libraries that CUDA depends on - comprehensive list for static linking
     println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:rustc-link-lib=m");
+    println!("cargo:rustc-link-lib=dl");
+    println!("cargo:rustc-link-lib=pthread");
+    
+    // Additional system libraries that might be needed on some systems
+    println!("cargo:rustc-link-lib=gcc_s");
+    println!("cargo:rustc-link-lib=c");
+    
+    println!("cargo:warning=CUDA library linking configuration complete");
 }
 
 fn detect_available_cuda_libraries() -> Vec<String> {
@@ -842,23 +902,51 @@ fn detect_available_cuda_libraries() -> Vec<String> {
     if let Ok(cuda_path) = env::var("CUDA_PATH") {
         search_paths.push(format!("{}/lib64", cuda_path));
         search_paths.push(format!("{}/lib", cuda_path));
+        search_paths.push(format!("{}/lib64/stubs", cuda_path));
     }
     
+    if let Ok(cuda_home) = env::var("CUDA_HOME") {
+        search_paths.push(format!("{}/lib64", cuda_home));
+        search_paths.push(format!("{}/lib", cuda_home));
+        search_paths.push(format!("{}/lib64/stubs", cuda_home));
+    }
+    
+    // Comprehensive search paths including VastAI/Docker environments
     search_paths.extend_from_slice(&[
         "/usr/local/cuda/lib64".to_string(),
         "/usr/local/cuda/lib".to_string(),
+        "/usr/local/cuda/lib64/stubs".to_string(),
+        "/usr/local/cuda-12/lib64".to_string(),
+        "/usr/local/cuda-12/lib".to_string(),
+        "/usr/local/cuda-11/lib64".to_string(),
+        "/usr/local/cuda-11/lib".to_string(),
         "/usr/lib/x86_64-linux-gnu".to_string(),
         "/usr/lib64".to_string(),
         "/usr/lib".to_string(),
+        "/usr/local/nvidia/lib64".to_string(),
+        "/usr/local/nvidia/lib".to_string(),
+        "/usr/local/cuda-toolkit/lib64".to_string(),
+        "/usr/local/cuda-toolkit/lib".to_string(),
+        "/opt/cuda/lib64".to_string(),
+        "/opt/cuda/lib".to_string(),
+        "/workspace/cuda/lib64".to_string(),
+        "/workspace/cuda/lib".to_string(),
     ]);
     
-    // Check each library in each search path
+    // Check each library in each search path with detailed reporting
     for lib in &cuda_libs {
         for path in &search_paths {
             let lib_path = format!("{}/lib{}.so", path, lib);
             let static_lib_path = format!("{}/lib{}.a", path, lib);
             
-            if std::path::Path::new(&lib_path).exists() || std::path::Path::new(&static_lib_path).exists() {
+            if std::path::Path::new(&lib_path).exists() {
+                println!("cargo:warning=Found CUDA library: {}", lib_path);
+                if !available.contains(&lib.to_string()) {
+                    available.push(lib.to_string());
+                }
+                break;
+            } else if std::path::Path::new(&static_lib_path).exists() {
+                println!("cargo:warning=Found CUDA static library: {}", static_lib_path);
                 if !available.contains(&lib.to_string()) {
                     available.push(lib.to_string());
                 }
@@ -867,7 +955,7 @@ fn detect_available_cuda_libraries() -> Vec<String> {
         }
     }
     
-    // Also try using ldconfig to find libraries
+    // Also try using ldconfig to find libraries system-wide
     if let Ok(output) = std::process::Command::new("ldconfig")
         .args(&["-p"])
         .output()
@@ -875,12 +963,43 @@ fn detect_available_cuda_libraries() -> Vec<String> {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
             for lib in &cuda_libs {
-                if output_str.contains(&format!("lib{}.so", lib)) {
-                    if !available.contains(&lib.to_string()) {
-                        available.push(lib.to_string());
+                let lib_pattern = format!("lib{}.so", lib);
+                if output_str.contains(&lib_pattern) {
+                    // Extract the path from ldconfig output for more detailed reporting
+                    for line in output_str.lines() {
+                        if line.contains(&lib_pattern) {
+                            println!("cargo:warning=Found CUDA library via ldconfig: {}", line.trim());
+                            if !available.contains(&lib.to_string()) {
+                                available.push(lib.to_string());
+                            }
+                            break;
+                        }
                     }
                 }
             }
+        }
+    }
+    
+    // Try pkg-config as another detection method
+    for lib in &cuda_libs {
+        if let Ok(output) = std::process::Command::new("pkg-config")
+            .args(&["--exists", &format!("cuda-{}", lib)])
+            .output()
+        {
+            if output.status.success() {
+                println!("cargo:warning=Found CUDA library via pkg-config: {}", lib);
+                if !available.contains(&lib.to_string()) {
+                    available.push(lib.to_string());
+                }
+            }
+        }
+    }
+    
+    // Final check - if we found nvcc but no libraries, warn about possible issue
+    if available.is_empty() {
+        if find_nvcc().is_ok() {
+            println!("cargo:warning=NVCC found but no CUDA libraries detected in search paths");
+            println!("cargo:warning=This may indicate a CUDA installation issue or missing library paths");
         }
     }
     
