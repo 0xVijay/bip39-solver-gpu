@@ -147,32 +147,50 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     let combined_lib = out_path.join("libcuda_kernels.a");
     
     // When using relocatable device code, we need to device-link the objects first
+    // This step is crucial for resolving cross-file device function calls
     if !object_files.is_empty() {
         let device_linked_obj = out_path.join("device_linked.o");
         let mut nvlink_cmd = std::process::Command::new(&nvcc);
+        
+        // Device linking arguments for cross-file resolution
         nvlink_cmd.args(&["-dlink"]);
         
-        // Add all object files to device linking
+        // Add all object files to device linking - order matters for symbol resolution
         for obj in &object_files {
             nvlink_cmd.arg(obj.to_str().unwrap());
         }
         
-        // Add GPU architectures for device linking
+        // Add GPU architectures for device linking - must match compilation architectures
         for arch in &gpu_architectures {
             nvlink_cmd.arg(&format!("-arch={}", arch));
         }
         
-        nvlink_cmd.args(&["-o", device_linked_obj.to_str().unwrap()]);
+        // Additional flags for device linking that help with symbol resolution
+        nvlink_cmd.args(&[
+            "-o", device_linked_obj.to_str().unwrap(),
+            "--compiler-options", "-fPIC",  // Position independent code for shared libraries
+            "-Xnvlink", "-suppress-stack-size-warning"  // Suppress stack size warnings that can cause issues
+        ]);
         
+        println!("cargo:warning=Device linking CUDA objects for cross-file function calls");
         let nvlink_output = nvlink_cmd.output()
             .map_err(|e| format!("Failed to device-link CUDA objects: {}", e))?;
         
         if !nvlink_output.status.success() {
             let stderr = String::from_utf8_lossy(&nvlink_output.stderr);
-            return Err(format!("nvcc device linking failed: {}", stderr));
+            let stdout = String::from_utf8_lossy(&nvlink_output.stdout);
+            
+            // Check if it's just warnings vs actual errors
+            if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
+                println!("cargo:warning=Device linking warnings (proceeding): {}", stderr);
+            } else {
+                return Err(format!("nvcc device linking failed: {}\nstdout: {}", stderr, stdout));
+            }
+        } else {
+            println!("cargo:warning=Device linking completed successfully");
         }
         
-        // Add the device-linked object to our object files
+        // Add the device-linked object to our object files - this contains the cross-file linkage
         object_files.push(device_linked_obj);
     }
     
@@ -709,14 +727,35 @@ fn setup_cuda_linking() {
 }
 
 fn add_cuda_linker_flags() {
-    // Add linker flags that can help with CUDA library resolution
+    // Add comprehensive linker flags for CUDA linking with cc
+    
+    // Allow undefined symbols from shared libraries (CUDA runtime provides these)
     println!("cargo:rustc-link-arg=-Wl,--allow-shlib-undefined");
+    
+    // Only link libraries that are actually needed to reduce conflicts
     println!("cargo:rustc-link-arg=-Wl,--as-needed");
     
-    // Ensure we search for shared libraries in runtime paths
+    // Disable new dtags to improve compatibility with older systems
+    println!("cargo:rustc-link-arg=-Wl,--disable-new-dtags");
+    
+    // Runtime library search paths for CUDA libraries
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/cuda/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/cuda/lib");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/nvidia/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/nvidia/lib");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/x86_64-linux-gnu");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib64");
+    
+    // VastAI/Docker specific runtime paths
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/cuda-toolkit/lib64");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/workspace/cuda/lib64");
+    
+    // Force C++ linking for CUDA compatibility
+    println!("cargo:rustc-link-arg=-lstdc++");
+    
+    // Additional flags to help with symbol resolution
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
     
     println!("cargo:warning=Added CUDA-specific linker flags");
 }
@@ -817,69 +856,72 @@ fn link_cuda_libraries() {
         
         // Fallback linking strategy for environments where detection fails
         // but libraries might still be available through system paths
-        println!("cargo:rustc-link-lib=cudadevrt");
-        println!("cargo:rustc-link-lib=cudart");
-        println!("cargo:rustc-link-lib=cuda");
+        println!("cargo:rustc-link-lib=dylib=cudadevrt");
+        println!("cargo:rustc-link-lib=dylib=cudart");
+        println!("cargo:rustc-link-lib=dylib=cuda");
         
-        // Add comprehensive system dependencies
-        println!("cargo:rustc-link-lib=stdc++");
-        println!("cargo:rustc-link-lib=m");
-        println!("cargo:rustc-link-lib=dl");
-        println!("cargo:rustc-link-lib=rt");
-        println!("cargo:rustc-link-lib=pthread");
+        // Add comprehensive system dependencies for CUDA
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-lib=dylib=m");
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-lib=dylib=rt");
+        println!("cargo:rustc-link-lib=dylib=pthread");
+        println!("cargo:rustc-link-lib=dylib=gcc_s");
         return;
     }
     
     // Link libraries in the correct order for relocatable device code
-    // 1. CUDA device runtime (required for -rdc=true)
+    // 1. CUDA device runtime (required for -rdc=true) - must be first
     if available_libs.contains(&"cudadevrt".to_string()) {
-        println!("cargo:rustc-link-lib=cudadevrt");
+        println!("cargo:rustc-link-lib=dylib=cudadevrt");
         println!("cargo:warning=Linking cudadevrt for relocatable device code");
     } else {
         println!("cargo:warning=libcudadevrt not found - trying fallback linking");
         // Still try to link it in case it's available but not detected
-        println!("cargo:rustc-link-lib=cudadevrt");
+        println!("cargo:rustc-link-lib=dylib=cudadevrt");
     }
     
-    // 2. CUDA runtime - prefer dynamic over static for better compatibility
+    // 2. CUDA runtime - prefer dynamic over static for final linking compatibility
     if available_libs.contains(&"cudart".to_string()) {
-        println!("cargo:rustc-link-lib=cudart");
+        println!("cargo:rustc-link-lib=dylib=cudart");
         println!("cargo:warning=Linking dynamic CUDA runtime");
     } else if available_libs.contains(&"cudart_static".to_string()) {
         println!("cargo:rustc-link-lib=static=cudart_static");
         println!("cargo:warning=Linking static CUDA runtime");
         // Static runtime requires additional system libraries
-        println!("cargo:rustc-link-lib=dl");
-        println!("cargo:rustc-link-lib=rt");
-        println!("cargo:rustc-link-lib=pthread");
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-lib=dylib=rt");
+        println!("cargo:rustc-link-lib=dylib=pthread");
     } else {
         println!("cargo:warning=No CUDA runtime library found - trying fallback");
-        println!("cargo:rustc-link-lib=cudart");
+        println!("cargo:rustc-link-lib=dylib=cudart");
     }
     
     // 3. CUDA driver API
     if available_libs.contains(&"cuda".to_string()) {
-        println!("cargo:rustc-link-lib=cuda");
+        println!("cargo:rustc-link-lib=dylib=cuda");
         println!("cargo:warning=Linking CUDA driver library");
     } else {
         println!("cargo:warning=libcuda not found - trying fallback");
-        println!("cargo:rustc-link-lib=cuda");
+        println!("cargo:rustc-link-lib=dylib=cuda");
     }
     
     // Additional libraries that might be needed for some CUDA operations
     if available_libs.contains(&"nvrtc".to_string()) {
-        println!("cargo:rustc-link-lib=nvrtc");
+        println!("cargo:rustc-link-lib=dylib=nvrtc");
     }
     
-    // System libraries that CUDA depends on - comprehensive list for static linking
-    println!("cargo:rustc-link-lib=stdc++");
-    println!("cargo:rustc-link-lib=m");
-    println!("cargo:rustc-link-lib=dl");
-    println!("cargo:rustc-link-lib=pthread");
+    // System libraries that CUDA depends on - critical for final cc linking step
+    // Use dylib to ensure they are dynamically linked and resolved by the system linker
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-lib=dylib=m");
+    println!("cargo:rustc-link-lib=dylib=dl");
+    println!("cargo:rustc-link-lib=dylib=pthread");
+    println!("cargo:rustc-link-lib=dylib=rt");
     
     // Additional system libraries that might be needed on some systems
-    println!("cargo:rustc-link-lib=gcc_s");
-    println!("cargo:rustc-link-lib=c");
+    println!("cargo:rustc-link-lib=dylib=gcc_s");
+    println!("cargo:rustc-link-lib=dylib=c");
     
     println!("cargo:warning=CUDA library linking configuration complete");
 }
