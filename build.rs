@@ -47,8 +47,10 @@ fn main() {
                         println!("cargo:warning=CUDA kernels compiled successfully");
                         
                         // Link CUDA libraries only after successful compilation
+                        // When using relocatable device code (-rdc=true), we need additional libraries
                         println!("cargo:rustc-link-lib=cudart");
                         println!("cargo:rustc-link-lib=cuda");
+                        println!("cargo:rustc-link-lib=cudadevrt");  // CUDA device runtime (needed for -rdc=true)
                         
                         // Add CUDA library search paths
                         if let Ok(cuda_path) = env::var("CUDA_PATH") {
