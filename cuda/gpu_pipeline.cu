@@ -12,15 +12,7 @@
 // Include kernels from other modules
 #include "hmac_sha512.cuh"
 
-// Forward declarations for functions from other modules
-// These will be included directly when files are combined
-__device__ void cuda_derive_ethereum_private_key(
-    const uint8_t* seed,
-    uint32_t address_index,
-    uint8_t* private_key
-);
-
-__device__ void public_key_to_ethereum_address(const uint8_t* public_key, uint8_t* address);
+// Function declarations removed - implementations are included directly when files are combined
 
 /**
  * Complete GPU pipeline: Mnemonic → Seed → Private Key → Public Key → Address
