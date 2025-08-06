@@ -235,6 +235,12 @@ extern "C" int cuda_complete_pipeline_host(
     uint8_t* d_found_addresses = nullptr;
     uint32_t* d_match_results = nullptr;
     
+    // Declare these variables early to avoid control flow bypass issues
+    char* mnemonic_ptr = nullptr;
+    char* passphrase_ptr = nullptr;
+    char** host_mnemonic_ptrs = nullptr;
+    char** host_passphrase_ptrs = nullptr;
+    
     // Calculate total string memory needed
     size_t total_mnemonic_size = 0;
     size_t total_passphrase_size = 0;
@@ -273,11 +279,11 @@ extern "C" int cuda_complete_pipeline_host(
     error = cudaMalloc(&d_match_results, count * sizeof(uint32_t));
     if (error != cudaSuccess) goto cleanup;
     
-    // Copy strings to device memory properly
-    char* mnemonic_ptr = (char*)d_mnemonic_strings;
-    char* passphrase_ptr = (char*)d_passphrase_strings;
-    char** host_mnemonic_ptrs = new char*[count];
-    char** host_passphrase_ptrs = new char*[count];
+    // Initialize the variables now that allocation succeeded
+    mnemonic_ptr = (char*)d_mnemonic_strings;
+    passphrase_ptr = (char*)d_passphrase_strings;
+    host_mnemonic_ptrs = new char*[count];
+    host_passphrase_ptrs = new char*[count];
     
     for (uint32_t i = 0; i < count; i++) {
         if (mnemonics[i]) {
@@ -302,20 +308,13 @@ extern "C" int cuda_complete_pipeline_host(
     // Copy pointer arrays to device
     error = cudaMemcpy(d_mnemonics, host_mnemonic_ptrs, count * sizeof(char*), cudaMemcpyHostToDevice);
     if (error != cudaSuccess) {
-        delete[] host_mnemonic_ptrs;
-        delete[] host_passphrase_ptrs;
         goto cleanup;
     }
     
     error = cudaMemcpy(d_passphrases, host_passphrase_ptrs, count * sizeof(char*), cudaMemcpyHostToDevice);
     if (error != cudaSuccess) {
-        delete[] host_mnemonic_ptrs;
-        delete[] host_passphrase_ptrs;
         goto cleanup;
     }
-    
-    delete[] host_mnemonic_ptrs;
-    delete[] host_passphrase_ptrs;
     
     // Copy other data
     error = cudaMemcpy(d_address_indices, address_indices, count * sizeof(uint32_t), cudaMemcpyHostToDevice);
@@ -353,6 +352,10 @@ extern "C" int cuda_complete_pipeline_host(
     if (error != cudaSuccess) goto cleanup;
     
 cleanup:
+    // Cleanup host memory
+    if (host_mnemonic_ptrs) delete[] host_mnemonic_ptrs;
+    if (host_passphrase_ptrs) delete[] host_passphrase_ptrs;
+    
     // Cleanup device memory
     if (d_mnemonics) cudaFree(d_mnemonics);
     if (d_passphrases) cudaFree(d_passphrases);
