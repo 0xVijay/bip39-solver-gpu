@@ -131,7 +131,7 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     combined_content.push_str("#include <cuda_runtime.h>\n");
     combined_content.push_str("#include <stdint.h>\n");
     combined_content.push_str("#include <cstring>\n");
-    combined_content.push_str("#include <algorithm>\n\n");
+    combined_content.push_str("#include <cstdlib>\n\n");
     
     // Include header file contents directly instead of using relative paths
     // This avoids path issues when compiling in OUT_DIR
@@ -202,6 +202,7 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
                 if trimmed.contains("cuda_runtime.h") || 
                    trimmed.contains("stdint.h") ||
                    trimmed.contains("cstring") ||
+                   trimmed.contains("cstdlib") ||
                    trimmed.contains("algorithm") ||
                    trimmed.contains("sha512.cuh") ||
                    trimmed.contains("hmac_sha512.cuh") {

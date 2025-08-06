@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 #include <cstring>
-#include <algorithm>
+#include <cstdlib>
 
 // Include kernels from other modules
 #include "hmac_sha512.cuh"
@@ -209,7 +209,7 @@ extern "C" int cuda_complete_pipeline_host(
     }
     
     // Calculate thread configuration based on device properties
-    int block_size = min(256, prop.maxThreadsPerBlock);
+    int block_size = (256 < prop.maxThreadsPerBlock) ? 256 : prop.maxThreadsPerBlock;
     int grid_size = (count + block_size - 1) / block_size;
     
     // Limit grid size to prevent memory overflow
@@ -274,8 +274,14 @@ extern "C" int cuda_complete_pipeline_host(
     // Initialize the variables now that allocation succeeded
     mnemonic_ptr = (char*)d_mnemonic_strings;
     passphrase_ptr = (char*)d_passphrase_strings;
-    host_mnemonic_ptrs = new char*[count];
-    host_passphrase_ptrs = new char*[count];
+    host_mnemonic_ptrs = (char**)malloc(count * sizeof(char*));
+    host_passphrase_ptrs = (char**)malloc(count * sizeof(char*));
+    
+    if (!host_mnemonic_ptrs || !host_passphrase_ptrs) {
+        if (host_mnemonic_ptrs) free(host_mnemonic_ptrs);
+        if (host_passphrase_ptrs) free(host_passphrase_ptrs);
+        goto cleanup;
+    }
     
     for (uint32_t i = 0; i < count; i++) {
         if (mnemonics[i]) {
@@ -345,8 +351,8 @@ extern "C" int cuda_complete_pipeline_host(
     
 cleanup:
     // Cleanup host memory
-    if (host_mnemonic_ptrs) delete[] host_mnemonic_ptrs;
-    if (host_passphrase_ptrs) delete[] host_passphrase_ptrs;
+    if (host_mnemonic_ptrs) free(host_mnemonic_ptrs);
+    if (host_passphrase_ptrs) free(host_passphrase_ptrs);
     
     // Cleanup device memory
     if (d_mnemonics) cudaFree(d_mnemonics);
