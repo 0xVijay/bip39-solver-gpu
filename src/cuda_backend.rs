@@ -1,8 +1,7 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
-#[cfg(feature = "cuda")]
-use crate::eth::{derive_ethereum_address, addresses_equal};
+
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
