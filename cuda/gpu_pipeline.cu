@@ -12,17 +12,15 @@
 // Include kernels from other modules
 #include "hmac_sha512.cuh"
 
-extern "C" {
-    // From bip32.cu  
-    __device__ void cuda_derive_ethereum_private_key(
-        const uint8_t* seed,
-        uint32_t address_index,
-        uint8_t* private_key
-    );
+// Forward declarations for functions from other modules
+// These will be included directly when files are combined
+__device__ void cuda_derive_ethereum_private_key(
+    const uint8_t* seed,
+    uint32_t address_index,
+    uint8_t* private_key
+);
 
-    // From keccak256.cu
-    __device__ void public_key_to_ethereum_address(const uint8_t* public_key, uint8_t* address);
-}
+__device__ void public_key_to_ethereum_address(const uint8_t* public_key, uint8_t* address);
 
 /**
  * Complete GPU pipeline: Mnemonic → Seed → Private Key → Public Key → Address
