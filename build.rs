@@ -119,151 +119,59 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     // Find nvcc compiler
     let nvcc = find_nvcc()?;
     
+    // Compile each CUDA source file separately
+    let mut object_files = Vec::new();
     let gpu_architectures = detect_gpu_architectures();
     println!("cargo:warning=Detected GPU architectures: {:?}", gpu_architectures);
     
-    // Create a combined source file that includes all CUDA sources
-    // This ensures all inline functions are available during compilation
-    let combined_source = out_path.join("combined_kernels.cu");
-    let mut combined_content = String::new();
-    
-    // Add common includes first
-    combined_content.push_str("#include <cuda_runtime.h>\n");
-    combined_content.push_str("#include <stdint.h>\n");
-    combined_content.push_str("#include <cstring>\n");
-    combined_content.push_str("#include <cstdlib>\n\n");
-    
-    // Include header file contents directly instead of using relative paths
-    // This avoids path issues when compiling in OUT_DIR
-    
-    // Include sha512.cuh content
-    let sha512_header = std::fs::read_to_string("cuda/sha512.cuh")
-        .map_err(|e| format!("Failed to read cuda/sha512.cuh: {}", e))?;
-    combined_content.push_str("// ========== Content from cuda/sha512.cuh ==========\n");
-    combined_content.push_str(&sha512_header);
-    combined_content.push_str("\n");
-    
-    // Include hmac_sha512.cuh content (but skip the sha512.cuh include)
-    let hmac_header = std::fs::read_to_string("cuda/hmac_sha512.cuh")
-        .map_err(|e| format!("Failed to read cuda/hmac_sha512.cuh: {}", e))?;
-    let hmac_filtered = hmac_header.lines()
-        .filter(|line| !line.trim().starts_with("#include \"sha512.cuh\""))
-        .collect::<Vec<_>>()
-        .join("\n");
-    combined_content.push_str("// ========== Content from cuda/hmac_sha512.cuh ==========\n");
-    combined_content.push_str(&hmac_filtered);
-    combined_content.push_str("\n\n");
-    
-    // Include all source files
     for source in sources {
-        println!("cargo:warning=Including CUDA source: {}", source);
+        println!("cargo:warning=Compiling CUDA source: {}", source);
+        let obj_name = format!("{}.o", source.replace("/", "_"));
+        let obj_path = out_path.join(&obj_name);
         
-        // Read the source file and extract its content (excluding includes and guards)
-        let source_content = std::fs::read_to_string(source)
-            .map_err(|e| format!("Failed to read {}: {}", source, e))?;
-            
-        // Filter out include guards and duplicate includes
-        let mut filtered_content = String::new();
-        let mut include_guard_depth = 0;
-        let mut current_include_guard = String::new();
+        let mut nvcc_cmd = std::process::Command::new(&nvcc);
+        nvcc_cmd.args(&[
+            "-c", 
+            source, 
+            "-o", 
+            obj_path.to_str().unwrap(), 
+            "--compiler-options", 
+            "-fPIC", 
+            "-O3", 
+            "--std=c++11", 
+            "-Xptxas", 
+            "-O3", 
+            "-lineinfo", 
+            "-Wno-deprecated-gpu-targets", 
+            "--disable-warnings"
+        ]);
         
-        for line in source_content.lines() {
-            let trimmed = line.trim();
-            
-            // Track include guards properly - skip only the outer include guard
-            if trimmed.starts_with("#ifndef") && (trimmed.contains("_CU") || trimmed.contains("_CUH")) {
-                if include_guard_depth == 0 {
-                    // This is the main include guard for this file - skip it
-                    current_include_guard = trimmed.replace("#ifndef ", "").trim().to_string();
-                    include_guard_depth += 1;
-                    continue;
-                }
-            }
-            
-            if trimmed.starts_with("#define") && include_guard_depth == 1 && 
-               trimmed.contains(&current_include_guard) {
-                // This is the define for the main include guard - skip it
-                continue;
-            }
-            
-            if trimmed.starts_with("#endif") && include_guard_depth > 0 {
-                // Check if this is the closing of the main include guard
-                if line.contains(&current_include_guard) || 
-                   (include_guard_depth == 1 && (trimmed == "#endif" || line.contains("//") && line.contains(&current_include_guard))) {
-                    include_guard_depth -= 1;
-                    if include_guard_depth == 0 {
-                        continue; // Skip the main include guard's endif
-                    }
-                }
-            }
-            
-            // Skip duplicate includes that we've already added
-            if trimmed.starts_with("#include") {
-                if trimmed.contains("cuda_runtime.h") || 
-                   trimmed.contains("stdint.h") ||
-                   trimmed.contains("cstring") ||
-                   trimmed.contains("cstdlib") ||
-                   trimmed.contains("algorithm") ||
-                   trimmed.contains("sha512.cuh") ||
-                   trimmed.contains("hmac_sha512.cuh") {
-                    continue;
-                }
-            }
-            
-            filtered_content.push_str(line);
-            filtered_content.push('\n');
+        for arch in &gpu_architectures {
+            nvcc_cmd.arg(&format!("-arch={}", arch));
         }
         
-        combined_content.push_str(&format!("// ========== Content from {} ==========\n", source));
-        combined_content.push_str(&filtered_content);
-        combined_content.push_str("\n");
-    }
-    
-    // Write the combined source file
-    std::fs::write(&combined_source, combined_content)
-        .map_err(|e| format!("Failed to write combined source: {}", e))?;
-    
-    // Compile the combined source file
-    println!("cargo:warning=Compiling combined CUDA kernels");
-    let obj_path = out_path.join("cuda_kernels_combined.o");
-    let mut nvcc_cmd = std::process::Command::new(&nvcc);
-    nvcc_cmd.args(&[
-        "-c", 
-        combined_source.to_str().unwrap(), 
-        "-o", 
-        obj_path.to_str().unwrap(), 
-        "--compiler-options", 
-        "-fPIC", 
-        "-O3", 
-        "--std=c++11", 
-        "-Xptxas", 
-        "-O3", 
-        "-lineinfo", 
-        "-Wno-deprecated-gpu-targets", 
-        "--disable-warnings"
-    ]);
-    
-    for arch in &gpu_architectures {
-        nvcc_cmd.arg(&format!("-arch={}", arch));
-    }
-    
-    let output = nvcc_cmd.output().map_err(|e| format!("Failed to execute nvcc: {}", e))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
-            println!("cargo:warning=CUDA compilation warnings: {}", stderr);
+        let output = nvcc_cmd.output().map_err(|e| format!("Failed to execute nvcc: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stderr.contains("warning") && !stderr.contains("error") && !stderr.contains("fatal") {
+                println!("cargo:warning=CUDA compilation warnings: {}", stderr);
+            } else {
+                return Err(format!("nvcc compilation failed: {}{}", stderr, stdout));
+            }
         } else {
-            return Err(format!("nvcc compilation failed: {}{}", stderr, stdout));
+            println!("cargo:warning=Compiled {} to {}", source, obj_path.display());
         }
-    } else {
-        println!("cargo:warning=Compiled combined CUDA kernels to {}", obj_path.display());
+        object_files.push(obj_path);
     }
     
-    // Create static library from the single object file
+    // Archive all object files into a static library
     let combined_lib = out_path.join("libcuda_kernels.a");
     let mut ar_cmd = std::process::Command::new("ar");
-    ar_cmd.arg("rcs").arg(combined_lib.to_str().unwrap()).arg(obj_path.to_str().unwrap());
+    ar_cmd.arg("rcs").arg(combined_lib.to_str().unwrap());
+    for obj in &object_files {
+        ar_cmd.arg(obj.to_str().unwrap());
+    }
     
     let ar_output = ar_cmd.output()
         .map_err(|e| format!("Failed to create static library: {}", e))?;
