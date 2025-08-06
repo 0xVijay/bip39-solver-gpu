@@ -133,9 +133,26 @@ fn compile_cuda_kernels(sources: &[&str]) -> Result<(), String> {
     combined_content.push_str("#include <cstring>\n");
     combined_content.push_str("#include <algorithm>\n\n");
     
-    // Include all header files first
-    combined_content.push_str("#include \"cuda/sha512.cuh\"\n");
-    combined_content.push_str("#include \"cuda/hmac_sha512.cuh\"\n\n");
+    // Include header file contents directly instead of using relative paths
+    // This avoids path issues when compiling in OUT_DIR
+    
+    // Include sha512.cuh content
+    let sha512_header = std::fs::read_to_string("cuda/sha512.cuh")
+        .map_err(|e| format!("Failed to read cuda/sha512.cuh: {}", e))?;
+    combined_content.push_str("// ========== Content from cuda/sha512.cuh ==========\n");
+    combined_content.push_str(&sha512_header);
+    combined_content.push_str("\n");
+    
+    // Include hmac_sha512.cuh content (but skip the sha512.cuh include)
+    let hmac_header = std::fs::read_to_string("cuda/hmac_sha512.cuh")
+        .map_err(|e| format!("Failed to read cuda/hmac_sha512.cuh: {}", e))?;
+    let hmac_filtered = hmac_header.lines()
+        .filter(|line| !line.trim().starts_with("#include \"sha512.cuh\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    combined_content.push_str("// ========== Content from cuda/hmac_sha512.cuh ==========\n");
+    combined_content.push_str(&hmac_filtered);
+    combined_content.push_str("\n\n");
     
     // Include all source files
     for source in sources {
