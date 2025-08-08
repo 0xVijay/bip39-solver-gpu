@@ -8,6 +8,7 @@ build = "build.rs"
 [features]
 default = []
 cuda = []
+opencl = ["dep:opencl3"]  # Always include opencl3 when opencl feature is enabled
 
 [[bin]]
 name = "bip39-solver-gpu"
@@ -23,7 +24,7 @@ path = "src/bin/worker.rs"
 
 [dependencies]
 # ocl = "0.19"  # Has build issues with old rustc-serialize
-opencl3 = "0.9"  # Use newer OpenCL bindings
+opencl3 = { version = "0.9", optional = true }  # Use newer OpenCL bindings, make optional
 hex = "0.4"
 rayon = "1.7"
 reqwest = { version = "0.11", features = ["blocking", "json", "rustls-tls"], default-features = false }
@@ -32,5 +33,12 @@ serde_json = "1"
 ethers-core = "2.0"
 k256 = "0.13"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
+# BIP39/BIP32/BIP44 support
+bip39 = "2.0"
+hmac = "0.12"
+sha2 = "0.10"
+pbkdf2 = "0.12"
+num-bigint = "0.4"
 
 [build-dependencies]
+cc = "1.0"

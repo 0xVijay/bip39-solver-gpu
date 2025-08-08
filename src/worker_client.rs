@@ -173,35 +173,6 @@ impl WorkerClient {
         }
     }
 
-    /// Send heartbeat to server
-    fn send_heartbeat(
-        &self,
-        job_id: &JobId,
-        progress: u64,
-        rate: f64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let heartbeat = WorkerHeartbeat {
-            job_id: job_id.clone(),
-            worker_id: self.worker_id.clone(),
-            progress,
-            rate,
-        };
-
-        let url = format!("{}/api/jobs/heartbeat", self.server_url);
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.secret))
-            .json(&heartbeat)
-            .send()?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(format!("Failed to send heartbeat: HTTP {}", response.status()).into())
-        }
-    }
-
     /// Process a job by searching the assigned range
     fn process_job(
         &self,

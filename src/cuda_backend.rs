@@ -1,11 +1,66 @@
 use crate::gpu_backend::{GpuBackend, GpuBatchResult, GpuDevice};
 use crate::word_space::WordSpace;
-use crate::eth::addresses_equal;
 use crate::error_handling::{GpuError, DeviceStatus, ErrorLogger, current_timestamp};
+
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::ffi::CString;
 use std::time::Instant;
+
+/// CUDA device properties structure
+#[cfg(feature = "cuda")]
+#[allow(dead_code)]
+#[repr(C)]
+struct CudaDeviceProperties {
+    name: [u8; 256],
+    total_global_mem: usize,
+    multiprocessor_count: i32,
+    max_threads_per_block: i32,
+}
+
+#[cfg(not(feature = "cuda"))]
+#[allow(dead_code)]
+#[repr(C)]
+struct CudaDeviceProperties {
+    name: [u8; 256],
+    total_global_mem: usize,
+    multiprocessor_count: i32,
+    max_threads_per_block: i32,
+}
+
+// CUDA runtime API functions - only available when CUDA is compiled and available
+#[cfg(all(feature = "cuda", cuda_available))]
+extern "C" {
+    fn cudaGetDeviceCount(count: *mut i32) -> i32;
+    fn cudaGetDeviceProperties(prop: *mut CudaDeviceProperties, device: i32) -> i32;
+    
+    // GPU pipeline functions
+    fn cuda_complete_pipeline_host(
+        mnemonics: *const *const std::os::raw::c_char,
+        passphrases: *const *const std::os::raw::c_char,
+        address_indices: *const std::os::raw::c_uint,
+        target_address: *const u8,
+        found_addresses: *mut u8,
+        match_results: *mut std::os::raw::c_uint,
+        count: std::os::raw::c_uint,
+    ) -> std::os::raw::c_int;
+}
+
+// Helper function names to avoid conflict - only available when CUDA is compiled and available
+#[cfg(all(feature = "cuda", cuda_available))]
+unsafe fn cuda_get_device_count(count: *mut i32) -> i32 {
+    cudaGetDeviceCount(count)
+}
+
+#[cfg(all(feature = "cuda", cuda_available))]
+unsafe fn cuda_get_device_properties(prop: *mut CudaDeviceProperties, device: i32) -> i32 {
+    cudaGetDeviceProperties(prop, device)
+}
+
+#[cfg(not(all(feature = "cuda", cuda_available)))]
+#[allow(dead_code)]
+unsafe fn cuda_get_device_count(_count: *mut i32) -> i32 {
+    -1
+}
 
 /// CUDA backend implementation with advanced error handling and failover
 pub struct CudaBackend {
@@ -13,7 +68,6 @@ pub struct CudaBackend {
     word_space: Option<Arc<WordSpace>>,
     device_status: Arc<Mutex<Vec<DeviceStatus>>>,
     error_logger: ErrorLogger,
-    max_recovery_attempts: u32,
 }
 
 impl CudaBackend {
@@ -24,13 +78,272 @@ impl CudaBackend {
             word_space: None,
             device_status: Arc::new(Mutex::new(Vec::new())),
             error_logger: ErrorLogger::new(true), // Verbose logging for development
-            max_recovery_attempts: 3,
         }
     }
 
     /// Set the word space for mnemonic generation
     pub fn set_word_space(&mut self, word_space: Arc<WordSpace>) {
         self.word_space = Some(word_space);
+    }
+
+    /// Check if CUDA is available by trying to get device count
+    /// This checks runtime availability, not just build-time compilation
+    #[cfg(feature = "cuda")]
+    fn is_cuda_available(&self) -> bool {
+        // Check if CUDA was compiled with kernels
+        #[cfg(cuda_available)]
+        {
+            let mut count = 0;
+            unsafe {
+                cuda_get_device_count(&mut count) == 0 && count > 0
+            }
+        }
+        
+        // If CUDA kernels weren't compiled, return false
+        #[cfg(not(cuda_available))]
+        {
+            false
+        }
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn is_cuda_available(&self) -> bool {
+        false
+    }
+    
+
+
+    /// Get the number of CUDA devices
+    #[cfg(feature = "cuda")]
+    fn get_device_count(&self) -> Result<i32, String> {
+        // If CUDA was compiled with kernels, use direct API
+        #[cfg(cuda_available)]
+        {
+            let mut count = 0;
+            let result = unsafe { cuda_get_device_count(&mut count) };
+            
+            if result == 0 {
+                return Ok(count);
+            } else {
+                return Err(format!("CUDA error getting device count: {}", result));
+            }
+        }
+        
+        // If CUDA kernels weren't compiled, return error
+        #[cfg(not(cuda_available))]
+        {
+            Err("CUDA kernels not compiled".to_string())
+        }
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    fn get_device_count(&self) -> Result<i32, String> {
+        Err("CUDA support not compiled".to_string())
+    }
+    
+
+    
+    /// Get device info via nvidia-smi (for VastAI/Docker environments)
+    #[cfg(feature = "cuda")]
+    fn get_device_info_via_nvidia_smi(&self, device_id: i32) -> (String, u64, u32) {
+        use std::process::Command;
+        
+        // Query device name and memory
+        if let Ok(output) = Command::new("nvidia-smi")
+            .args(&[
+                "--query-gpu=name,memory.total", 
+                "--format=csv,noheader,nounits",
+                &format!("--id={}", device_id)
+            ])
+            .output() 
+        {
+            if output.status.success() {
+                if let Ok(info) = String::from_utf8(output.stdout) {
+                    let parts: Vec<&str> = info.trim().split(',').collect();
+                    if parts.len() >= 2 {
+                        let name = parts[0].trim().to_string();
+                        let memory = parts[1].trim().parse::<u64>()
+                            .unwrap_or(8192) * 1024 * 1024; // Convert MB to bytes
+                        
+                        // Estimate compute units based on GPU name
+                        let compute_units = self.estimate_compute_units(&name);
+                        
+                        return (name, memory, compute_units);
+                    }
+                }
+            }
+        }
+        
+        // Fallback to generic naming
+        (
+            format!("CUDA Device {}", device_id),
+            8 * 1024 * 1024 * 1024, // 8GB default
+            80,                      // Default compute units
+        )
+    }
+
+    /// Get comprehensive device information (tries CUDA API first, then nvidia-smi)
+    #[cfg(feature = "cuda")]
+    fn get_device_info(&self, device_id: i32) -> (String, u64, u32) {
+        // Try CUDA API first if kernels are compiled
+        #[cfg(cuda_available)]
+        {
+            use std::mem;
+            let mut properties: CudaDeviceProperties = unsafe { mem::zeroed() };
+            
+            unsafe {
+                if cuda_get_device_properties(&mut properties, device_id) == 0 {
+                    // Extract device name from C string
+                    let mut name_bytes = Vec::new();
+                    for &byte in properties.name.iter() {
+                        if byte == 0 { break; }
+                        name_bytes.push(byte);
+                    }
+                    
+                    let device_name = String::from_utf8(name_bytes)
+                        .unwrap_or_else(|_| format!("CUDA Device {}", device_id));
+                    
+                    let memory = properties.total_global_mem as u64;
+                    let compute_units = properties.multiprocessor_count as u32;
+                    
+                    return (device_name, memory, compute_units);
+                }
+            }
+        }
+        
+        // Fallback to nvidia-smi
+        self.get_device_info_via_nvidia_smi(device_id)
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    fn get_device_info(&self, device_id: i32) -> (String, u64, u32) {
+        (format!("CUDA Device {}", device_id), 8 * 1024 * 1024 * 1024, 80)
+    }
+
+    /// Estimate compute units (SMs) based on GPU name
+    #[allow(dead_code)]
+    fn estimate_compute_units(&self, gpu_name: &str) -> u32 {
+        let gpu_name_lower = gpu_name.to_lowercase();
+        
+        // RTX 40XX series (Ada Lovelace)
+        if gpu_name_lower.contains("rtx 4090") { return 128; }
+        if gpu_name_lower.contains("rtx 4080") { return 76; }
+        if gpu_name_lower.contains("rtx 4070") { return 46; }
+        if gpu_name_lower.contains("rtx 4060") { return 24; }
+        
+        // RTX 30XX series (Ampere)
+        if gpu_name_lower.contains("rtx 3090") { return 82; }
+        if gpu_name_lower.contains("rtx 3080") { return 68; }
+        if gpu_name_lower.contains("rtx 3070") { return 46; }
+        if gpu_name_lower.contains("rtx 3060 ti") { return 38; }
+        if gpu_name_lower.contains("rtx 3060") { return 28; }
+        
+        // RTX 20XX series (Turing)
+        if gpu_name_lower.contains("rtx 2080 ti") { return 68; }
+        if gpu_name_lower.contains("rtx 2080") { return 46; }
+        if gpu_name_lower.contains("rtx 2070") { return 36; }
+        if gpu_name_lower.contains("rtx 2060") { return 30; }
+        
+        // Tesla/Data Center cards
+        if gpu_name_lower.contains("v100") { return 80; }
+        if gpu_name_lower.contains("a100") { return 108; }
+        if gpu_name_lower.contains("a40") { return 84; }
+        if gpu_name_lower.contains("a30") { return 56; }
+        if gpu_name_lower.contains("a10") { return 36; }
+        if gpu_name_lower.contains("t4") { return 40; }
+        
+        // GTX 16XX series (Turing)
+        if gpu_name_lower.contains("gtx 1660") { return 22; }
+        if gpu_name_lower.contains("gtx 1650") { return 14; }
+        
+        // GTX 10XX series (Pascal)
+        if gpu_name_lower.contains("gtx 1080 ti") { return 28; }
+        if gpu_name_lower.contains("gtx 1080") { return 20; }
+        if gpu_name_lower.contains("gtx 1070") { return 15; }
+        if gpu_name_lower.contains("gtx 1060") { return 10; }
+        
+        // Default fallback
+        40
+    }
+    
+
+    
+    #[cfg(all(feature = "cuda", cuda_available))]
+    fn gpu_complete_pipeline_batch(
+        &self,
+        mnemonics: &[String],
+        passphrases: &[String],
+        address_indices: &[u32],
+        target_address: &[u8; 20],
+    ) -> Result<(Vec<[u8; 20]>, Vec<bool>), String> {
+        use std::os::raw::{c_char, c_uint};
+        
+        if mnemonics.len() != passphrases.len() || mnemonics.len() != address_indices.len() {
+            return Err("All input arrays must have same length".to_string());
+        }
+        
+        let count = mnemonics.len() as c_uint;
+        let mut found_addresses = vec![0u8; (count as usize) * 20];
+        let mut match_results = vec![0u32; count as usize];
+        
+        // Convert strings to C string pointers
+        let mnemonic_cstrings: Vec<std::ffi::CString> = mnemonics
+            .iter()
+            .map(|s| std::ffi::CString::new(s.as_str()).unwrap())
+            .collect();
+        let passphrase_cstrings: Vec<std::ffi::CString> = passphrases
+            .iter()
+            .map(|s| std::ffi::CString::new(s.as_str()).unwrap())
+            .collect();
+        
+        let mnemonic_ptrs: Vec<*const c_char> = mnemonic_cstrings
+            .iter()
+            .map(|cs| cs.as_ptr())
+            .collect();
+        let passphrase_ptrs: Vec<*const c_char> = passphrase_cstrings
+            .iter()
+            .map(|cs| cs.as_ptr())
+            .collect();
+        
+        unsafe {
+            let result = cuda_complete_pipeline_host(
+                mnemonic_ptrs.as_ptr(),
+                passphrase_ptrs.as_ptr(),
+                address_indices.as_ptr() as *const c_uint,
+                target_address.as_ptr(),
+                found_addresses.as_mut_ptr(),
+                match_results.as_mut_ptr(),
+                count,
+            );
+            
+            if result != 0 {
+                return Err("CUDA complete pipeline kernel execution failed".to_string());
+            }
+        }
+        
+        // Convert results
+        let mut addresses = Vec::new();
+        for i in 0..count as usize {
+            let mut address = [0u8; 20];
+            address.copy_from_slice(&found_addresses[i * 20..(i + 1) * 20]);
+            addresses.push(address);
+        }
+        
+        let matches: Vec<bool> = match_results.iter().map(|&r| r != 0).collect();
+        
+        Ok((addresses, matches))
+    }
+    
+    #[cfg(not(all(feature = "cuda", cuda_available)))]
+    #[allow(dead_code)]
+    fn gpu_complete_pipeline_batch(
+        &self,
+        _mnemonics: &[String],
+        _passphrases: &[String],
+        _address_indices: &[u32],
+        _target_address: &[u8; 20],
+    ) -> Result<(Vec<[u8; 20]>, Vec<bool>), String> {
+        Err("CUDA support not compiled. Use --features cuda to enable GPU acceleration.".to_string())
     }
 
     /// Check device health and update status
@@ -46,25 +359,6 @@ impl CudaBackend {
             // Simulate device check for non-CUDA builds
             Ok(())
         }
-    }
-
-    /// Attempt to recover a failed device
-    fn attempt_device_recovery(&self, device_id: u32) -> Result<(), GpuError> {
-        self.error_logger.log_recovery_attempt(device_id, "CUDA Device", 1);
-        
-        // In a real implementation, this would:
-        // 1. Reset device context
-        // 2. Reinitialize memory
-        // 3. Reload kernels
-        // 4. Verify device is responsive
-        
-        #[cfg(feature = "cuda")]
-        {
-            // Simulate recovery attempt
-            self.check_device_health(device_id)?;
-        }
-        
-        Ok(())
     }
 
     /// Get available healthy devices
@@ -113,74 +407,154 @@ impl CudaBackend {
             });
         }
 
-        // Perform health check before execution
+        // Perform comprehensive health check before execution
         if let Err(error) = self.check_device_health(device_id) {
             self.mark_device_failed(device_id, error.clone());
             return Err(error);
         }
 
-        // Estimate memory requirements
-        #[cfg(feature = "cuda")]
-        let estimated_memory = {
-            use crate::error_handling::cuda_errors::estimate_memory_for_batch;
-            estimate_memory_for_batch(batch_size)
-        };
-        #[cfg(not(feature = "cuda"))]
-        let estimated_memory = (batch_size as usize).saturating_mul(230);
+        // Validate batch size to prevent memory issues
+        let max_safe_batch_size = self.calculate_max_safe_batch_size(device_id);
+        let actual_batch_size = batch_size.min(max_safe_batch_size);
+        
+        if actual_batch_size != batch_size {
+            println!("Warning: Reducing batch size from {} to {} for device {} to prevent memory overflow", 
+                     batch_size, actual_batch_size, device_id);
+        }
 
-        // Check available memory (simplified check)
-        if estimated_memory > 8 * 1024 * 1024 * 1024 { // 8GB limit
+        // Estimate memory requirements with safety margin
+        let estimated_memory = self.estimate_memory_for_batch(actual_batch_size);
+        let available_memory = self.get_device_memory(device_id);
+        
+        if estimated_memory > (available_memory * 80 / 100) { // Use only 80% of available memory
             let error = GpuError::OutOfMemory {
                 device_id,
-                batch_size,
-                available_memory: 8 * 1024 * 1024 * 1024,
+                batch_size: actual_batch_size,
+                available_memory,
                 timestamp: current_timestamp(),
             };
             self.error_logger.log_error(&error);
             return Err(error);
         }
 
-        // Execute the actual batch processing
-        let result = self.execute_batch_internal(
-            device_id, start_offset, batch_size, target_address, derivation_path, passphrase
-        );
-
-        let duration = start_time.elapsed().as_millis() as u64;
-        
-        match &result {
-            Ok(_) => {
-                // Update device status on success
-                if let Ok(mut status_vec) = self.device_status.lock() {
-                    if let Some(status) = status_vec.iter_mut().find(|s| s.device_id == device_id) {
-                        status.increment_batch_count();
-                        status.mark_healthy();
+        // Execute with retry mechanism
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            match self.execute_batch_internal(
+                device_id, start_offset, actual_batch_size, target_address, derivation_path, passphrase
+            ) {
+                Ok(result) => {
+                    let duration = start_time.elapsed().as_millis() as u64;
+                    
+                    // Update device status on success
+                    if let Ok(mut status_vec) = self.device_status.lock() {
+                        if let Some(status) = status_vec.iter_mut().find(|s| s.device_id == device_id) {
+                            status.increment_batch_count();
+                            status.mark_healthy();
+                        }
+                    }
+                    self.error_logger.log_batch_result(device_id, actual_batch_size, true, duration);
+                    return Ok(result);
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    println!("Device {} batch attempt {} failed, retrying...", device_id, attempt);
+                    
+                    // Wait a bit before retry
+                    std::thread::sleep(std::time::Duration::from_millis(100 * attempt));
+                    
+                    // Reset device before retry
+                    #[cfg(feature = "cuda")]
+                    {
+                        use crate::error_handling::cuda_errors::reset_device;
+                        if let Err(reset_error) = reset_device(device_id) {
+                            println!("Warning: Failed to reset device {} before retry: {:?}", device_id, reset_error);
+                        }
                     }
                 }
-                self.error_logger.log_batch_result(device_id, batch_size, true, duration);
-            }
-            Err(error) => {
-                self.error_logger.log_batch_result(device_id, batch_size, false, duration);
-                
-                // Convert generic error to GpuError for proper handling
-                let gpu_error = GpuError::KernelExecutionFailed {
-                    device_id,
-                    kernel_name: "batch_execution".to_string(),
-                    error: error.to_string(),
-                    timestamp: current_timestamp(),
-                };
-                self.mark_device_failed(device_id, gpu_error);
             }
         }
 
-        result.map_err(|e| GpuError::KernelExecutionFailed {
-            device_id,
-            kernel_name: "batch_execution".to_string(),
-            error: e.to_string(),
-            timestamp: current_timestamp(),
-        })
+        let duration = start_time.elapsed().as_millis() as u64;
+        self.error_logger.log_batch_result(device_id, actual_batch_size, false, duration);
+        
+        // Convert the last error to GpuError for proper handling
+        let gpu_error = if let Some(error) = last_error {
+            GpuError::KernelExecutionFailed {
+                device_id,
+                kernel_name: "batch_execution".to_string(),
+                error: error.to_string(),
+                timestamp: current_timestamp(),
+            }
+        } else {
+            GpuError::DeviceHardwareFailure {
+                device_id,
+                device_name: format!("CUDA Device {}", device_id),
+                error_code: -1,
+                timestamp: current_timestamp(),
+            }
+        };
+        
+        self.mark_device_failed(device_id, gpu_error.clone());
+        Err(gpu_error)
     }
 
-    /// Internal batch execution (original implementation)
+    /// Calculate maximum safe batch size for device
+    fn calculate_max_safe_batch_size(&self, device_id: u32) -> u128 {
+        let available_memory = self.get_device_memory(device_id);
+        let memory_per_item = 512; // Estimated memory per mnemonic processing (conservative)
+        let safety_factor = 0.7; // Use only 70% of available memory for safety
+        
+        ((available_memory as f64 * safety_factor) / memory_per_item as f64) as u128
+    }
+
+    /// Estimate memory requirements for batch
+    fn estimate_memory_for_batch(&self, batch_size: u128) -> u64 {
+        let base_memory_per_item = 512; // Base memory per item (strings, intermediate results)
+        let additional_overhead = batch_size as u64 * 64; // Additional GPU kernel overhead
+        
+        (batch_size as u64 * base_memory_per_item) + additional_overhead + (100 * 1024 * 1024) // 100MB overhead
+    }
+
+    /// Get device memory for a CUDA device
+    fn get_device_memory(&self, _device_id: u32) -> u64 {
+        #[cfg(all(feature = "cuda", cuda_available))]
+        {
+            use std::mem;
+            let mut properties: CudaDeviceProperties = unsafe { mem::zeroed() };
+            unsafe {
+                if cuda_get_device_properties(&mut properties, _device_id as i32) == 0 {
+                    return properties.total_global_mem as u64;
+                }
+            }
+        }
+        
+        // Fallback: get via nvidia-smi
+        #[cfg(feature = "cuda")]
+        {
+            if let Ok(output) = std::process::Command::new("nvidia-smi")
+                .args(&[
+                    "--query-gpu=memory.total", 
+                    "--format=csv,noheader,nounits",
+                    &format!("--id={}", _device_id)
+                ])
+                .output() 
+            {
+                if output.status.success() {
+                    if let Ok(memory_str) = String::from_utf8(output.stdout) {
+                        if let Ok(memory_mb) = memory_str.trim().parse::<u64>() {
+                            return memory_mb * 1024 * 1024; // Convert MB to bytes
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Conservative fallback
+        8 * 1024 * 1024 * 1024 // 8GB
+    }
+
+    /// Internal batch execution with GPU-optimized processing
     fn execute_batch_internal(
         &self,
         _device_id: u32,
@@ -190,177 +564,122 @@ impl CudaBackend {
         _derivation_path: &str,
         _passphrase: &str,
     ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        #[cfg(not(feature = "cuda"))]
-        {
-            // Return error when CUDA is not compiled
-            return Err(
-                "CUDA support not compiled. Use --features cuda to enable CUDA support.".into(),
-            );
+        // Use GPU-optimized processing with real CUDA kernels
+        self.execute_batch_gpu_optimized(
+            _start_offset,
+            _batch_size,
+            _target_address,
+            _derivation_path,
+            _passphrase,
+        )
+    }
+
+    /// GPU-optimized batch execution using CUDA kernels
+    fn execute_batch_gpu_optimized(
+        &self,
+        start_offset: u128,
+        batch_size: u128,
+        target_address: &str,
+        _derivation_path: &str,
+        passphrase: &str,
+    ) -> Result<GpuBatchResult, Box<dyn Error>> {
+        let word_space = self
+            .word_space
+            .as_ref()
+            .ok_or("Word space not initialized")?;
+
+        // Convert target address to bytes
+        let target_bytes = if target_address.starts_with("0x") || target_address.starts_with("0X") {
+            hex::decode(&target_address[2..])
+                .map_err(|_| "Invalid target address format")?
+        } else {
+            hex::decode(target_address)
+                .map_err(|_| "Invalid target address format")?
+        };
+        
+        if target_bytes.len() != 20 {
+            return Err("Target address must be 20 bytes".into());
+        }
+        
+        let mut target_address_array = [0u8; 20];
+        target_address_array.copy_from_slice(&target_bytes);
+
+        // Generate mnemonics for this batch
+        let mut mnemonics = Vec::new();
+        let mut passphrases = Vec::new();
+        let mut address_indices = Vec::new();
+        
+        let batch_end = (start_offset + batch_size).min(word_space.total_combinations);
+        
+        for offset in start_offset..batch_end {
+            if let Some(word_indices) = word_space.index_to_words(offset) {
+                if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
+                    mnemonics.push(mnemonic);
+                    passphrases.push(passphrase.to_string());
+                    address_indices.push(2); // BIP44 address index (m/44'/60'/0'/0/2)
+                }
+            }
         }
 
-        #[cfg(feature = "cuda")]
-        {
-            let word_space = self
-                .word_space
-                .as_ref()
-                .ok_or("Word space not initialized")?;
-
-            println!(
-                "CUDA batch execution: device={}, offset={}, batch_size={}, target={}",
-                _device_id, _start_offset, _batch_size, _target_address
-            );
-
-            // For demonstration, process a smaller batch to show functionality
-            let actual_batch_size = std::cmp::min(_batch_size, 1000) as u32;
-
-            // Prepare mnemonic strings for the batch
-            let mut mnemonics = Vec::new();
-            let mut mnemonic_cstrings = Vec::new();
-            let mut mnemonic_ptrs = Vec::new();
-
-            for i in 0..actual_batch_size {
-                let offset = _start_offset + i as u128;
-                if offset >= word_space.total_combinations {
-                    break;
-                }
-
-                if let Some(word_indices) = word_space.index_to_words(offset) {
-                    if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                        let c_mnemonic = CString::new(mnemonic.clone())?;
-                        mnemonic_cstrings.push(c_mnemonic);
-                        mnemonics.push(mnemonic);
-                    }
-                }
-            }
-
-            if mnemonics.is_empty() {
-                return Ok(GpuBatchResult {
-                    mnemonic: None,
-                    address: None,
-                    offset: None,
-                    processed_count: actual_batch_size as u128,
-                });
-            }
-
-            // Convert CStrings to pointers
-            for cstring in &mnemonic_cstrings {
-                mnemonic_ptrs.push(cstring.as_ptr());
-            }
-
-            // Prepare passphrase (empty for now)
-            let passphrase = CString::new("")?;
-            let passphrase_ptrs: Vec<*const i8> = vec![passphrase.as_ptr(); mnemonics.len()];
-
-            // Allocate output buffers
-            let mut seeds = vec![0u8; mnemonics.len() * 64];
-            let mut private_keys = vec![0u8; mnemonics.len() * 32];
-            let mut public_keys = vec![0u8; mnemonics.len() * 64];
-            let mut addresses = vec![0u8; mnemonics.len() * 20];
-
-            // Execute CUDA kernels in sequence with error checking
-            println!("Executing PBKDF2 kernel...");
-            let result = unsafe {
-                cuda_ffi::cuda_pbkdf2_batch_host(
-                    mnemonic_ptrs.as_ptr(),
-                    passphrase_ptrs.as_ptr(),
-                    seeds.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "pbkdf2_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("PBKDF2 kernel execution failed".into());
-            }
-
-            println!("Executing BIP32 derivation kernel...");
-            let derivation_paths = vec![0u32; mnemonics.len()]; // Simplified
-            let result = unsafe {
-                cuda_ffi::cuda_bip32_derive_batch_host(
-                    seeds.as_ptr(),
-                    derivation_paths.as_ptr(),
-                    private_keys.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "bip32_derive_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("BIP32 derivation kernel execution failed".into());
-            }
-
-            println!("Executing secp256k1 public key derivation kernel...");
-            let result = unsafe {
-                cuda_ffi::cuda_secp256k1_pubkey_batch_host(
-                    private_keys.as_ptr(),
-                    public_keys.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "secp256k1_pubkey_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("secp256k1 kernel execution failed".into());
-            }
-
-            println!("Executing Keccak-256 address generation kernel...");
-            let result = unsafe {
-                cuda_ffi::cuda_keccak256_address_batch_host(
-                    public_keys.as_ptr(),
-                    addresses.as_mut_ptr(),
-                    mnemonics.len() as u32,
-                )
-            };
-            
-            #[cfg(feature = "cuda")]
-            {
-                use crate::error_handling::cuda_errors::check_cuda_error;
-                check_cuda_error(result, _device_id, "keccak256_address_batch")?;
-            }
-            #[cfg(not(feature = "cuda"))]
-            if result != 0 {
-                return Err("Keccak-256 kernel execution failed".into());
-            }
-
-            // Check for target address match
-            for (i, mnemonic) in mnemonics.iter().enumerate() {
-                let address_bytes = &addresses[i * 20..(i + 1) * 20];
-                let address_hex = format!("0x{}", hex::encode(address_bytes));
-
-                if addresses_equal(&address_hex, _target_address) {
-                    println!("🎉 CUDA kernel found a match!");
-                    return Ok(GpuBatchResult {
-                        mnemonic: Some(mnemonic.clone()),
-                        address: Some(address_hex),
-                        offset: Some(_start_offset + i as u128),
-                        processed_count: actual_batch_size as u128,
-                    });
-                }
-            }
-
-            Ok(GpuBatchResult {
+        if mnemonics.is_empty() {
+            return Ok(GpuBatchResult {
                 mnemonic: None,
                 address: None,
                 offset: None,
-                processed_count: actual_batch_size as u128,
-            })
+                processed_count: 0,
+            });
+        }
+
+        // Use GPU complete pipeline for maximum performance
+        #[cfg(all(feature = "cuda", cuda_available))]
+        {
+            match self.gpu_complete_pipeline_batch(
+                &mnemonics,
+                &passphrases,
+                &address_indices,
+                &target_address_array,
+            ) {
+                Ok((addresses, matches)) => {
+                    // Check for matches
+                    for (i, &is_match) in matches.iter().enumerate() {
+                        if is_match {
+                            let found_offset = start_offset + i as u128;
+                            let address_hex = format!("0x{}", hex::encode(&addresses[i]));
+                            
+                            return Ok(GpuBatchResult {
+                                mnemonic: Some(mnemonics[i].clone()),
+                                address: Some(address_hex),
+                                offset: Some(found_offset),
+                                processed_count: mnemonics.len() as u128,
+                            });
+                        }
+                    }
+                    
+                    Ok(GpuBatchResult {
+                        mnemonic: None,
+                        address: None,
+                        offset: None,
+                        processed_count: mnemonics.len() as u128,
+                    })
+                }
+                Err(e) => {
+                    // Return GPU error instead of falling back to CPU
+                    return Err(format!("CUDA GPU kernel execution failed: {}", e).into());
+                }
+            }
+        }
+        
+        #[cfg(all(feature = "cuda", not(cuda_available)))]
+        {
+            return Err("CUDA kernels not compiled. Recompile with CUDA toolkit for GPU acceleration.".into());
+        }
+        
+        #[cfg(not(feature = "cuda"))]
+        {
+            return Err("CUDA support not compiled. Use --features cuda to enable CUDA support.".into());
         }
     }
+
 }
 
 impl GpuBackend for CudaBackend {
@@ -376,7 +695,7 @@ impl GpuBackend for CudaBackend {
         println!("Initializing CUDA backend with advanced error handling...");
 
         // Check if CUDA is available
-        if !cuda_ffi::is_cuda_available() {
+        if !self.is_cuda_available() {
             let error = GpuError::BackendUnavailable {
                 backend_name: "CUDA".to_string(),
                 reason: "CUDA runtime not available".to_string(),
@@ -387,14 +706,16 @@ impl GpuBackend for CudaBackend {
         }
 
         // Get device count to verify CUDA setup
-        match cuda_ffi::get_device_count() {
+        match self.get_device_count() {
             Ok(count) if count > 0 => {
                 println!("Found {} CUDA device(s)", count);
                 
-                // Initialize device status tracking
+                // Initialize device status tracking with real device names
                 let mut status_vec = Vec::new();
                 for i in 0..count {
-                    let device_name = format!("CUDA Device {}", i);
+                    let (device_name, memory, compute_units) = self.get_device_info(i);
+                    println!("  Device {}: {} ({} MB memory, {} compute units)", 
+                             i, device_name, memory / (1024 * 1024), compute_units);
                     let status = DeviceStatus::new(i as u32, device_name);
                     status_vec.push(status);
                 }
@@ -445,18 +766,19 @@ impl GpuBackend for CudaBackend {
     fn enumerate_devices(&self) -> Result<Vec<GpuDevice>, Box<dyn Error>> {
         println!("Enumerating CUDA devices...");
 
-        let device_count = cuda_ffi::get_device_count()
+        let device_count = self.get_device_count()
             .map_err(|e| format!("Failed to get CUDA device count: {}", e))?;
 
         let mut devices = Vec::new();
 
         for i in 0..device_count {
-            // In a real implementation, this would query actual device properties
+            let (device_name, memory, compute_units) = self.get_device_info(i);
+
             devices.push(GpuDevice {
                 id: i as u32,
-                name: format!("CUDA Device {}", i),
-                memory: 8 * 1024 * 1024 * 1024, // 8GB default
-                compute_units: 80,              // Default compute units
+                name: device_name,
+                memory,
+                compute_units,
             });
         }
 
@@ -488,115 +810,13 @@ impl GpuBackend for CudaBackend {
 
     fn is_available(&self) -> bool {
         // Check if CUDA runtime is available
-        cuda_ffi::is_cuda_available() && cuda_ffi::get_device_count().unwrap_or(0) > 0
+        self.is_cuda_available() && self.get_device_count().unwrap_or(0) > 0
     }
 }
 
 impl Default for CudaBackend {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// CUDA FFI bindings (functional when CUDA feature is enabled)
-#[cfg(feature = "cuda")]
-pub mod cuda_ffi {
-    //! Foreign Function Interface bindings for CUDA kernels
-    //!
-    //! This module contains the Rust FFI bindings to call CUDA kernels
-    //! for PBKDF2, secp256k1, and Keccak-256 operations.
-
-    use std::os::raw::{c_char, c_int, c_uint};
-
-    #[allow(dead_code)]
-    #[repr(C)]
-    pub struct CudaDeviceProperties {
-        pub name: [u8; 256],
-        pub total_global_mem: usize,
-        pub multiprocessor_count: i32,
-        pub max_threads_per_block: i32,
-    }
-
-    // External CUDA function declarations
-    extern "C" {
-        /// PBKDF2-HMAC-SHA512 batch computation
-        pub fn cuda_pbkdf2_batch_host(
-            mnemonics: *const *const c_char,
-            passphrases: *const *const c_char,
-            seeds: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// secp256k1 public key derivation batch
-        pub fn cuda_secp256k1_pubkey_batch_host(
-            private_keys: *const u8,
-            public_keys: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// BIP32 hierarchical deterministic key derivation batch
-        pub fn cuda_bip32_derive_batch_host(
-            seeds: *const u8,
-            derivation_paths: *const c_uint,
-            private_keys: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// Keccak-256 address generation batch
-        pub fn cuda_keccak256_address_batch_host(
-            public_keys: *const u8,
-            addresses: *mut u8,
-            count: c_uint,
-        ) -> c_int;
-
-        /// Address comparison batch
-        pub fn cuda_compare_addresses_batch_host(
-            addresses: *const u8,
-            target: *const u8,
-            results: *mut c_uint,
-            count: c_uint,
-        ) -> c_int;
-    }
-
-    /// Check if CUDA is available by trying to get device count
-    pub fn is_cuda_available() -> bool {
-        // For now, assume CUDA is available if the library loads
-        // In a real implementation, this would call cudaGetDeviceCount
-        true
-    }
-
-    /// Get the number of CUDA devices
-    pub fn get_device_count() -> Result<i32, String> {
-        // For now, return a mock device count
-        // In a real implementation, this would call cudaGetDeviceCount
-        Ok(1)
-    }
-}
-
-/// CUDA FFI bindings (stub when CUDA feature is disabled)
-#[cfg(not(feature = "cuda"))]
-pub mod cuda_ffi {
-    //! Foreign Function Interface bindings for CUDA kernels (disabled)
-    //!
-    //! This module provides stub implementations when CUDA is not available.
-
-    #[allow(dead_code)]
-    #[repr(C)]
-    pub struct CudaDeviceProperties {
-        pub name: [u8; 256],
-        pub total_global_mem: usize,
-        pub multiprocessor_count: i32,
-        pub max_threads_per_block: i32,
-    }
-
-    /// Check if CUDA is available
-    pub fn is_cuda_available() -> bool {
-        false
-    }
-
-    /// Get the number of CUDA devices
-    pub fn get_device_count() -> Result<i32, String> {
-        Err("CUDA support not compiled".to_string())
     }
 }
 
