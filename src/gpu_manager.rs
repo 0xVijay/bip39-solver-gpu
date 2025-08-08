@@ -8,6 +8,9 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+// Import GPU memory functions directly
+use crate::gpu_memory::{calculate_optimal_batch_size, get_memory_info};
+
 /// GPU manager for handling multiple GPU backends and devices with advanced error handling
 pub struct GpuManager {
     backend: Box<dyn GpuBackend>,
@@ -15,7 +18,6 @@ pub struct GpuManager {
     config: GpuConfig,
     device_status: Arc<Mutex<Vec<DeviceStatus>>>,
     error_logger: ErrorLogger,
-    cpu_fallback_enabled: bool,
 }
 
 impl GpuManager {
@@ -111,7 +113,6 @@ impl GpuManager {
             config: gpu_config,
             device_status: Arc::new(Mutex::new(device_status_vec)),
             error_logger: ErrorLogger::new(false), // Non-verbose for manager
-            cpu_fallback_enabled: true,
         })
     }
 
@@ -128,6 +129,11 @@ impl GpuManager {
     /// Check if multi-GPU processing is enabled
     pub fn is_multi_gpu_enabled(&self) -> bool {
         self.config.multi_gpu && self.devices.len() > 1
+    }
+
+    /// Check if multi-GPU was requested in config
+    pub fn is_multi_gpu_requested(&self) -> bool {
+        self.config.multi_gpu
     }
 
     /// Get healthy devices that can accept work
@@ -202,6 +208,27 @@ impl GpuManager {
         }
     }
 
+    /// Get optimal batch size for a specific device
+    pub fn get_optimal_batch_size(&self, device_id: u32) -> Option<u128> {
+        self.devices.iter()
+            .find(|device| device.id == device_id)
+            .map(|device| calculate_optimal_batch_size(device))
+    }
+
+    /// Get optimal batch size for all devices
+    pub fn get_optimal_batch_sizes(&self) -> Vec<(u32, u128)> {
+        self.devices.iter()
+            .map(|device| (device.id, calculate_optimal_batch_size(device)))
+            .collect()
+    }
+
+    /// Get memory info for a device and batch size
+    pub fn get_device_memory_info(&self, device_id: u32, batch_size: u128) -> Option<String> {
+        self.devices.iter()
+            .find(|device| device.id == device_id)
+            .map(|device| get_memory_info(device, batch_size))
+    }
+
     /// Find alternative device for failover
     fn find_failover_device(&self, failed_device_id: u32) -> Option<u32> {
         let healthy_devices = self.get_healthy_devices();
@@ -209,75 +236,7 @@ impl GpuManager {
             .find(|&id| id != failed_device_id)
     }
 
-    /// Execute batch with CPU fallback
-    fn execute_with_cpu_fallback(
-        &self,
-        start_offset: u128,
-        batch_size: u128,
-        target_address: &str,
-        derivation_path: &str,
-        passphrase: &str,
-    ) -> Result<GpuBatchResult, Box<dyn Error>> {
-        println!("🔄 Falling back to CPU processing...");
-        
-        // This is a simplified CPU fallback implementation
-        // In practice, this would use the existing CPU-based processing logic
-        use crate::eth::derive_ethereum_address;
-        use crate::word_space::WordSpace;
-        
-        // Get word space from config
-        let word_space = WordSpace::from_config(&crate::config::Config {
-            word_constraints: vec![],
-            ethereum: crate::config::EthereumConfig {
-                derivation_path: derivation_path.to_string(),
-                target_address: target_address.to_string(),
-            },
-            slack: None,
-            worker: None,
-            gpu: None,
-            batch_size: batch_size as u64,
-            passphrase: passphrase.to_string(),
-        });
-
-        // Process a small batch on CPU for demonstration
-        let cpu_batch_size = std::cmp::min(batch_size, 100) as u32;
-        
-        for i in 0..cpu_batch_size {
-            let offset = start_offset + i as u128;
-            if offset >= word_space.total_combinations {
-                break;
-            }
-
-            if let Some(word_indices) = word_space.index_to_words(offset) {
-                if let Some(mnemonic) = WordSpace::words_to_mnemonic(&word_indices) {
-                    match derive_ethereum_address(&mnemonic, passphrase, derivation_path) {
-                        Ok(address) => {
-                            use crate::eth::addresses_equal;
-                            if addresses_equal(&address, target_address) {
-                                println!("🎉 CPU fallback found a match!");
-                                return Ok(GpuBatchResult {
-                                    mnemonic: Some(mnemonic),
-                                    address: Some(address),
-                                    offset: Some(offset),
-                                    processed_count: i as u128 + 1,
-                                });
-                            }
-                        }
-                        Err(_) => continue, // Skip invalid mnemonics
-                    }
-                }
-            }
-        }
-
-        Ok(GpuBatchResult {
-            mnemonic: None,
-            address: None,
-            offset: None,
-            processed_count: cpu_batch_size as u128,
-        })
-    }
-
-    /// Execute a batch on a specific device with failover support
+    /// Execute a batch on a specific device with failover support (GPU only)
     pub fn execute_batch(
         &self,
         device_id: u32,
@@ -305,13 +264,8 @@ impl GpuManager {
                     &format!("batch size {}", batch_size));
                 return self.execute_batch(alternative_device, start_offset, batch_size, 
                     target_address, derivation_path, passphrase);
-            } else if self.cpu_fallback_enabled {
-                self.error_logger.log_failover(device_id, None, 
-                    &format!("batch size {}", batch_size));
-                return self.execute_with_cpu_fallback(start_offset, batch_size, 
-                    target_address, derivation_path, passphrase);
             } else {
-                return Err("No healthy devices available and CPU fallback disabled".into());
+                return Err("No healthy GPU devices available".into());
             }
         }
 
@@ -375,14 +329,9 @@ impl GpuManager {
                         &format!("batch size {}", batch_size));
                     return self.execute_batch(alternative_device, start_offset, batch_size, 
                         target_address, derivation_path, passphrase);
-                } else if self.cpu_fallback_enabled {
-                    self.error_logger.log_failover(device_id, None, 
-                        &format!("batch size {}", batch_size));
-                    return self.execute_with_cpu_fallback(start_offset, batch_size, 
-                        target_address, derivation_path, passphrase);
+                } else {
+                    return Err("No healthy GPU devices available".into());
                 }
-                
-                Err(error)
             }
         }
     }
@@ -400,14 +349,7 @@ impl GpuManager {
         let healthy_devices = self.get_healthy_devices();
         
         if healthy_devices.is_empty() {
-            if self.cpu_fallback_enabled {
-                println!("No healthy GPU devices, falling back to CPU");
-                let cpu_result = self.execute_with_cpu_fallback(
-                    start_offset, total_batch_size, target_address, derivation_path, passphrase)?;
-                return Ok(vec![cpu_result]);
-            } else {
-                return Err("No healthy GPU devices available and CPU fallback disabled".into());
-            }
+            return Err("No healthy GPU devices available".into());
         }
 
         if !self.is_multi_gpu_enabled() || healthy_devices.len() == 1 {
@@ -498,14 +440,7 @@ impl GpuManager {
         }
 
         if completed_devices == 0 {
-            if self.cpu_fallback_enabled {
-                println!("All GPU devices failed, falling back to CPU");
-                let cpu_result = self.execute_with_cpu_fallback(
-                    start_offset, total_batch_size, target_address, derivation_path, passphrase)?;
-                return Ok(vec![cpu_result]);
-            } else {
-                return Err("All GPU devices failed and CPU fallback disabled".into());
-            }
+            return Err("All GPU devices failed".into());
         }
 
         Ok(results)
