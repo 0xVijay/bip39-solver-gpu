@@ -185,9 +185,9 @@ mod tests {
                 crate::config::WordConstraint { position: 3, words: vec!["vendor".to_string()] },
                 crate::config::WordConstraint { position: 4, words: vec!["engine".to_string(), "energy".to_string(), "engage".to_string()] },
                 crate::config::WordConstraint { position: 5, words: vec!["dragon".to_string(), "draft".to_string(), "drama".to_string()] },
-                crate::config::WordConstraint { position: 6, words: vec!["horse".to_string(), "honor".to_string(), "hope".to_string()] },
+                crate::config::WordConstraint { position: 6, words: vec!["horse".to_string(), "hover".to_string(), "hope".to_string()] },
                 crate::config::WordConstraint { position: 7, words: vec!["gorilla".to_string()] },
-                crate::config::WordConstraint { position: 8, words: vec!["pear".to_string(), "peace".to_string(), "peak".to_string()] },
+                crate::config::WordConstraint { position: 8, words: vec!["pear".to_string(), "peace".to_string(), "pencil".to_string()] },
                 crate::config::WordConstraint { position: 9, words: vec!["old".to_string(), "ocean".to_string(), "offer".to_string()] },
                 crate::config::WordConstraint { position: 10, words: vec!["dance".to_string()] },
                 crate::config::WordConstraint { position: 11, words: vec!["shield".to_string()] },
@@ -196,7 +196,7 @@ mod tests {
         
         let gen = CandidateGenerator::new(&config, &word_lut).unwrap();
         
-        // Should have exactly 486 combinations (2×1×3×1×3×3×3×1×3×3×1×1)
-        assert_eq!(gen.total_combinations(), 486);
+        // Should have exactly 1458 combinations (2×1×3×1×3×3×3×1×3×3×1×1)
+        assert_eq!(gen.total_combinations(), 1458);
     }
 }
