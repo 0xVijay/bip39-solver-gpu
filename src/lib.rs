@@ -1,19 +1,9 @@
 pub mod config;
-pub mod cuda_backend;
-pub mod gpu_models;
-pub mod cuda_ffi;
-pub mod error_handling;
-pub mod eth;
-pub mod gpu_backend;
-pub mod gpu_manager;
-pub mod gpu_memory;
-pub mod job_server;
-pub mod job_types;
-pub mod opencl_backend;
-pub mod slack;
-pub mod stress_testing;
-pub mod word_space;
-pub mod worker_client;
-
-#[cfg(test)]
-mod tests;
+pub mod word_lut;
+pub mod candidate_gen;
+pub mod bip39;
+pub mod bip44;
+pub mod eth_addr;
+pub mod gpu_worker;
+pub mod cpu_worker;
+pub mod utils;

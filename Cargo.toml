@@ -11,16 +11,8 @@ cuda = []
 opencl = ["dep:opencl3"]  # Always include opencl3 when opencl feature is enabled
 
 [[bin]]
-name = "bip39-solver-gpu"
+name = "seed_crack"
 path = "src/main.rs"
-
-[[bin]]
-name = "bip39-server"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "bip39-worker"
-path = "src/bin/worker.rs"
 
 [dependencies]
 # ocl = "0.19"  # Has build issues with old rustc-serialize
