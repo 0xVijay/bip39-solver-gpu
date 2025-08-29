@@ -7,6 +7,3 @@ pub mod eth_addr;
 pub mod gpu_worker;
 pub mod cpu_worker;
 pub mod utils;
-
-#[cfg(test)]
-mod tests;

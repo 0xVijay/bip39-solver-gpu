@@ -112,12 +112,29 @@ impl Bip44 {
         Ok(result)
     }
     
-    /// Convert private key to compressed public key (simplified)
-    fn private_to_public_key(_private_key: &[u8; 32]) -> Result<[u8; 33], Box<dyn std::error::Error>> {
-        // For BIP44 derivation, we need the public key
-        // This is a simplified version - in production use secp256k1 library
-        // For now, return a placeholder that allows the derivation to continue
-        Ok([0x02; 33]) // Compressed public key prefix + 32 bytes
+    /// Convert private key to compressed public key 
+    fn private_to_public_key(private_key: &[u8; 32]) -> Result<[u8; 33], Box<dyn std::error::Error>> {
+        use k256::ecdsa::SigningKey;
+        use k256::elliptic_curve::sec1::ToEncodedPoint;
+        
+        // Create signing key from private key
+        let signing_key = SigningKey::from_bytes(private_key.into())?;
+        
+        // Get the verifying (public) key
+        let verifying_key = signing_key.verifying_key();
+        
+        // Get compressed public key (33 bytes: 0x02/0x03 prefix + 32 bytes X coordinate)
+        let public_key_point = verifying_key.to_encoded_point(true); // true = compressed
+        let public_key_bytes = public_key_point.as_bytes();
+        
+        if public_key_bytes.len() != 33 {
+            return Err(format!("Invalid compressed public key length: {}", public_key_bytes.len()).into());
+        }
+        
+        let mut result = [0u8; 33];
+        result.copy_from_slice(public_key_bytes);
+        
+        Ok(result)
     }
     
     /// Parse BIP44 derivation path and validate format

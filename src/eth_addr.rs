@@ -151,6 +151,11 @@ mod tests {
         
         // Validate it's a valid address format
         assert!(EthAddr::is_valid_address(&address));
+        
+        // Verify it matches the expected address for this known mnemonic
+        let expected = "0x9858EfFD232B4033E47d90003D41EC34EcaEda94";
+        assert!(EthAddr::addresses_equal(&address, expected), 
+            "Generated address {} doesn't match expected {}", address, expected);
     }
     
     #[test]
