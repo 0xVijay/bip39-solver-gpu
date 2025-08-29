@@ -91,8 +91,14 @@ fn run_gpu_search(
     let batch_size = 64000; // As specified in PRD
     let total = candidate_gen.total_combinations();
     
+    println!("[INFO] Starting GPU search with batch size {}", batch_size);
+    
     for batch_start in (0..total).step_by(batch_size) {
         let batch_end = std::cmp::min(batch_start + batch_size as u128, total);
+        
+        println!("[INFO] Processing batch {} to {} ({} candidates)", 
+                 batch_start, batch_end, batch_end - batch_start);
+        
         let batch_candidates = candidate_gen.generate_batch(batch_start, batch_end - batch_start)?;
         
         if let Some(result) = gpu_worker.process_batch(&batch_candidates, config, word_lut)? {

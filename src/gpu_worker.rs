@@ -101,7 +101,15 @@ impl GpuWorker {
         config: &Config,
         word_lut: &WordLut,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        for candidate in candidates {
+        let total_candidates = candidates.len();
+        let progress_interval = std::cmp::max(1000, total_candidates / 20); // Show progress every 5%
+        
+        for (idx, candidate) in candidates.iter().enumerate() {
+            if idx > 0 && idx % progress_interval == 0 {
+                let percentage = (idx as f64 / total_candidates as f64) * 100.0;
+                println!("[INFO] Processing candidates: {}/{} ({:.1}%)", idx, total_candidates, percentage);
+            }
+            
             // Quick validation first
             if !Bip39::quick_validate_indices(candidate) {
                 continue; // Skip invalid checksums
@@ -122,6 +130,7 @@ impl GpuWorker {
             
             // Check if it matches target
             if EthAddr::addresses_equal(&address, &config.ethereum.target_address) {
+                println!("[INFO] Match found at candidate {}/{}", idx + 1, total_candidates);
                 return Ok(Some(mnemonic));
             }
         }

@@ -1,0 +1,15 @@
+{
+  "wallet_type": "ethereum",
+  "mnemonic_length": 12,
+  "ethereum": {
+    "target_address": "0x9858EfFD232B4033E47d90003D41EC34EcaEda94",
+    "derivation_path": "m/44'/60'/0'/0/0",
+    "passphrase": ""
+  },
+  "word_constraints": [
+    { "position": 0, "words": ["abandon", "ability"] },
+    { "position": 1, "words": ["abandon", "ability", "able"] },
+    { "position": 2, "words": ["abandon", "ability", "able", "about"] },
+    { "position": 11, "words": ["about"] }
+  ]
+}
