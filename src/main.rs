@@ -54,14 +54,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[INFO] {} candidates", candidate_gen.total_combinations());
 
     // Debug: Test the known mnemonic directly
-    println!("[DEBUG] Testing known mnemonic...");
-    let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    if let Ok(seed) = bip39::Bip39::mnemonic_to_seed(test_mnemonic, &config.ethereum.passphrase) {
-        if let Ok(private_key) = bip44::Bip44::derive_private_key(&seed, &config.ethereum.derivation_path) {
-            if let Ok(address) = eth_addr::EthAddr::private_key_to_address(&private_key) {
-                println!("[DEBUG] Known mnemonic produces address: {}", address);
-                println!("[DEBUG] Target address: {}", config.ethereum.target_address);
-                println!("[DEBUG] Addresses match: {}", eth_addr::EthAddr::addresses_equal(&address, &config.ethereum.target_address));
+    if std::env::var("DEBUG").is_ok() {
+        println!("[DEBUG] Testing known mnemonic...");
+        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        if let Ok(seed) = bip39::Bip39::mnemonic_to_seed(test_mnemonic, &config.ethereum.passphrase) {
+            if let Ok(private_key) = bip44::Bip44::derive_private_key(&seed, &config.ethereum.derivation_path) {
+                if let Ok(address) = eth_addr::EthAddr::private_key_to_address(&private_key) {
+                    println!("[DEBUG] Known mnemonic produces address: {}", address);
+                    println!("[DEBUG] Target address: {}", config.ethereum.target_address);
+                    println!("[DEBUG] Addresses match: {}", eth_addr::EthAddr::addresses_equal(&address, &config.ethereum.target_address));
+                }
             }
         }
     }

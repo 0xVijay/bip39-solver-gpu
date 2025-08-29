@@ -34,11 +34,23 @@ impl CandidateGenerator {
             for word in &constraint.words {
                 if let Some(idx) = word_lut.word_to_index(word) {
                     valid_indices.push(idx);
+                } else {
+                    if std::env::var("DEBUG").is_ok() {
+                        println!("[WARN] Word '{}' at position {} not found in BIP39 wordlist", word, constraint.position);
+                    }
                 }
             }
             
             if !valid_indices.is_empty() {
+                if std::env::var("DEBUG").is_ok() {
+                    println!("[DEBUG] Position {}: {} valid words out of {} specified", 
+                        constraint.position, valid_indices.len(), constraint.words.len());
+                }
                 positions[constraint.position] = valid_indices;
+            } else {
+                if std::env::var("DEBUG").is_ok() {
+                    println!("[WARN] Position {} has no valid words, keeping all 2048", constraint.position);
+                }
             }
         }
         
