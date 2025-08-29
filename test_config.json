@@ -1,22 +1,23 @@
 {
-  "word_constraints": [
-    {
-      "position": 0,
-      "prefix": "abandon",
-      "words": []
-    },
-    {
-      "position": 1,
-      "prefix": null,
-      "words": ["abandon", "ability", "able"]
-    }
-  ],
+  "wallet_type": "ethereum",
+  "mnemonic_length": 12,
   "ethereum": {
+    "target_address": "0x7b86ad4905fca691229125807c9a4078d837ba9b",
     "derivation_path": "m/44'/60'/0'/0/0",
-    "target_address": "0x742d35Cc6634C0532925a3b8D581C027BD5b7c4f"
+    "passphrase": ""
   },
-  "slack": null,
-  "worker": null,
-  "batch_size": 100,
-  "passphrase": ""
+  "word_constraints": [
+    { "position": 0, "words": ["abandon"] },
+    { "position": 1, "words": ["abandon"] },
+    { "position": 2, "words": ["abandon"] },
+    { "position": 3, "words": ["abandon"] },
+    { "position": 4, "words": ["abandon"] },
+    { "position": 5, "words": ["abandon"] },
+    { "position": 6, "words": ["abandon"] },
+    { "position": 7, "words": ["abandon"] },
+    { "position": 8, "words": ["abandon"] },
+    { "position": 9, "words": ["abandon"] },
+    { "position": 10, "words": ["abandon"] },
+    { "position": 11, "words": ["about"] }
+  ]
 }
