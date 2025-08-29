@@ -1,6 +1,7 @@
 use std::env;
 use std::time::Instant;
 
+// Module declarations - consolidated from lib.rs
 mod config;
 mod word_lut;
 mod candidate_gen;
